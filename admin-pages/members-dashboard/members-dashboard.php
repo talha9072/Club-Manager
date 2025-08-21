@@ -482,8 +482,6 @@ function render_members_dashboard_html() {
         });
     </script>
 
-
-
     <?php
     return ob_get_clean();
 }
