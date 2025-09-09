@@ -462,7 +462,11 @@ function render_events_table($user_club_name, $events_data, $filters = [], $pagi
 
                                 <td data-label="Download">
                                     <?php if (strtolower($event->tickets) !== 'no') : ?>
-                                        <a href="#" class="download-csv" data-event-id="<?php echo esc_attr($event->event_id); ?>">
+                                        <?php $nonce = wp_create_nonce('eventon_download_events'); ?>
+                                        <a href="#"
+                                        class="download-csv"
+                                        data-event-id="<?php echo esc_attr($event->event_id); ?>"
+                                        data-nonce="<?php echo esc_attr($nonce); ?>">
                                             <i class="fa fa-download" style="color: #10487B; font-size: 24px;"></i>
                                         </a>
                                     <?php else : ?>
@@ -491,21 +495,20 @@ function render_events_table($user_club_name, $events_data, $filters = [], $pagi
         }
 
         document.addEventListener('DOMContentLoaded', function () {
-            document.querySelectorAll('.download-csv').forEach(function(link) {
-                link.addEventListener('click', function(event) {
-                    event.preventDefault();
-                    event.stopImmediatePropagation();
-                    const eventId = this.getAttribute('data-event-id');
-                    const downloadUrl = `/wp-admin/admin-ajax.php?action=the_ajax_evotx_a3&e_id=${eventId}&pid=${eventId}`;
-                    const tempLink = document.createElement('a');
-                    tempLink.href = downloadUrl;
-                    tempLink.setAttribute('download', `event_${eventId}_attendees.csv`);
-                    document.body.appendChild(tempLink);
-                    tempLink.click();
-                    document.body.removeChild(tempLink);
-                });
-            });
+    document.querySelectorAll('.download-csv').forEach(function(link) {
+        link.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+
+            const eventId = this.getAttribute('data-event-id');
+            const nonce   = this.getAttribute('data-nonce');
+
+            const downloadUrl = `/wp-admin/admin-ajax.php?action=eventon_export_events&eid=${eventId}&nonce=${nonce}`;
+            window.location.href = downloadUrl;
         });
+    });
+});
+
     </script>
     <?php
 }
