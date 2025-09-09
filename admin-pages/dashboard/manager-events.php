@@ -273,31 +273,63 @@ function fetch_events_for_club($filters = [], $pagination = []) {
 function render_pagination($current_page, $total_pages) {
     if ($total_pages <= 1) return;
 
-    echo '<div class="pagination" style="margin-top: 20px; text-align: center;">';
+    $range = 2; // current page ke aage/peeche kitne dikhane hain
+    $start = max(1, $current_page - $range);
+    $end   = min($total_pages, $current_page + $range);
+
+    echo '<div class="pagination" style="margin:20px 0; text-align:center;">';
 
     // Previous Button
     if ($current_page > 1) {
         echo '<a href="' . esc_url(add_query_arg('paged', $current_page - 1)) . '" 
-              style="margin: 0 5px; padding: 5px 10px; border: 1px solid #ddd; text-decoration: none; color: #333;">
-              Previous
+              style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
+              &laquo; Prev
               </a>';
     }
 
-    // Page Numbers
-    for ($i = 1; $i <= $total_pages; $i++) {
-        echo '<a href="' . esc_url(add_query_arg('paged', $i)) . '" 
-              class="' . ($i == $current_page ? 'current' : '') . '" 
-              style="margin: 0 5px; padding: 5px 10px; border: 1px solid #ddd; text-decoration: none; 
-              ' . ($i == $current_page ? 'background: #10487B; color: #fff;' : 'color: #333;') . '">
-              ' . $i . '
+    // First Page + Dots
+    if ($start > 1) {
+        echo '<a href="' . esc_url(add_query_arg('paged', 1)) . '" 
+              style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
+              1
+              </a>';
+        if ($start > 2) {
+            echo '<span style="margin:0 5px; padding:6px 12px; color:#666;">...</span>';
+        }
+    }
+
+    // Page Loop
+    for ($i = $start; $i <= $end; $i++) {
+        if ($i == $current_page) {
+            // ✅ Active page highlight
+            echo '<span style="margin:0 5px; padding:6px 12px; border:1px solid #10487B; 
+                    background:#10487B; color:#fff; font-weight:bold;">
+                    ' . $i . '
+                  </span>';
+        } else {
+            echo '<a href="' . esc_url(add_query_arg('paged', $i)) . '" 
+                  style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
+                  ' . $i . '
+                  </a>';
+        }
+    }
+
+    // Last Page + Dots
+    if ($end < $total_pages) {
+        if ($end < $total_pages - 1) {
+            echo '<span style="margin:0 5px; padding:6px 12px; color:#666;">...</span>';
+        }
+        echo '<a href="' . esc_url(add_query_arg('paged', $total_pages)) . '" 
+              style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
+              ' . $total_pages . '
               </a>';
     }
 
     // Next Button
     if ($current_page < $total_pages) {
         echo '<a href="' . esc_url(add_query_arg('paged', $current_page + 1)) . '" 
-              style="margin: 0 5px; padding: 5px 10px; border: 1px solid #ddd; text-decoration: none; color: #333;">
-              Next
+              style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
+              Next &raquo;
               </a>';
     }
 
