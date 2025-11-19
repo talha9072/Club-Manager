@@ -23,6 +23,7 @@ $club = $wpdb->get_row($wpdb->prepare(
 $club_name = $club ? esc_attr($club->club_name) : '';
 $club_url = $club ? esc_attr($club->club_url) : '/';
 $club_logo = $club ? esc_url($club->club_logo) : '';
+$club_currency = $club ? esc_attr($club->club_currency) : '';
 $selected_gform_id = $club ? intval($club->gform_id) : null; // Initialize selected_gform_id here
 
 // Fetch EFT details
@@ -74,6 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_club_details']))
     $club_url = sanitize_text_field($_POST['club_url']);
     $club_logo = esc_url_raw($_POST['club_logo']);
     $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : null; // Add template_id
+    $club_currency = sanitize_text_field($_POST['club_currency']);
 
     // Update the club in the database
     $wpdb->update(
@@ -82,7 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_club_details']))
             'club_name'   => $club_name,
             'club_url'    => $club_url,
             'club_logo'   => $club_logo,
-            'template_id' => $template_id // Include template_id in update
+            'template_id' => $template_id,
+            'club_currency' => $club_currency // Include template_id in update
         ),
         array('club_id' => $club_id),
         array('%s', '%s', '%s', '%d'), // Include %d for template_id
@@ -540,6 +543,15 @@ if (!empty($_POST)) {
                 <td>
                     <input type="text" name="club_url" id="club_url" value="<?php echo esc_url($club_url); ?>" class="regular-text">
                     <p class="description"><?php echo __('URL should start with a slash (/) and use hyphens for spaces.', 'club-manager'); ?></p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="club_currency"><?php _e('Club Currency', 'club-manager'); ?></label></th>
+                <td>
+                    <input type="text" name="club_currency" id="club_currency" 
+                        value="<?php echo esc_attr($club_currency); ?>" 
+                        class="regular-text" required>
+                    <p class="description"><?php echo __('Example: ZAR, USD, GBP', 'club-manager'); ?></p>
                 </td>
             </tr>
             <tr>

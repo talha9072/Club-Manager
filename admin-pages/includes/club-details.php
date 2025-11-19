@@ -20,6 +20,7 @@ $club_details = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}cl
 $club_name = $club_details ? esc_attr( $club_details->club_name ) : '';
 $club_url = $club_details ? esc_attr( $club_details->club_url ) : '/';
 $club_logo = $club_details ? esc_url( $club_details->club_logo ) : '';
+$club_currency = $club_details ? esc_attr( $club_details->club_currency ) : '';
 $template_id = $club_details ? intval( $club_details->template_id ) : null;
 
 // Check if form is submitted
@@ -27,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_club_details']))
     $club_name = sanitize_text_field($_POST['club_name']);
     $club_url = esc_url_raw($_POST['club_url']);
     $club_logo = esc_url_raw($_POST['club_logo']);
+    $club_currency = sanitize_text_field($_POST['club_currency']);
     $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : null;
 
     // Insert or update the club details in the database
@@ -39,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_club_details']))
                 'club_url'    => $club_url,
                 'club_logo'   => $club_logo,
                 'template_id' => $template_id, // Include template_id
+                'club_currency' => $club_currency,
             ],
             ['club_id' => $club_id]
         );
@@ -134,6 +137,18 @@ function search_pages_ajax_handler() {
     </td>
 </tr>
 
+<tr>
+    <th scope="row">
+        <label for="club_currency">
+            <?php _e('Club Currency', 'textdomain'); ?>
+            <span class="woocommerce-help-tip" data-tip="<?php _e('Enter the currency code, for example ZAR, USD, GBP etc.', 'textdomain'); ?>"></span>
+        </label>
+    </th>
+    <td>
+        <input type="text" id="club_currency" name="club_currency" value="<?php echo $club_currency; ?>" class="regular-text" required />
+        <p class="description"><?php _e('Example: ZAR, USD, GBP', 'textdomain'); ?></p>
+    </td>
+</tr>
 
 
 
