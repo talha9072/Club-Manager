@@ -3,14 +3,23 @@
 if (!defined('ABSPATH')) {
     exit;
 }
+
+// Function to fetch and display all valuations done by the logged-in user
 function fetch_user_valuations() {
+    // Get the current logged-in user
     $current_user = wp_get_current_user();
+
     if (!$current_user->exists()) {
         echo '<p>You must be logged in to view your valuations.</p>';
         return;
     }
+
+    // Fetch the logged-in user's ID
     $user_id = intval($current_user->ID);
+
     global $wpdb;
+
+    // Query to fetch all valuations for Gravity Form ID 25
     $all_valuations = $wpdb->get_results(
         $wpdb->prepare(
             "SELECT e.id AS entry_id, e.date_created,
@@ -23,15 +32,23 @@ function fetch_user_valuations() {
             $user_id, 25
         )
     );
+
+    // Status Color Map for Badges
     $status_map = [
-        'Reviewed' => ['Reviewed', '#C6E1C6', '#5B841B'],    
-        'Pending Review' => ['Pending Review', '#F8D7DA', '#721C24'], 
+        'Reviewed' => ['Reviewed', '#C6E1C6', '#5B841B'],    // Green
+        'Pending Review' => ['Pending Review', '#F8D7DA', '#721C24'], // Light Red
     ];
+
+    // Count filters
     $total_valuations = count($all_valuations);
     $pending_valuations = count(array_filter($all_valuations, fn($valuation) => !$valuation->evaluation_pdf));
     $reviewed_valuations = count(array_filter($all_valuations, fn($valuation) => $valuation->evaluation_pdf));
+
+    // Filter and search parameters
     $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
     $date_filter = isset($_GET['date']) ? sanitize_text_field($_GET['date']) : '';
+
+    // Filter valuations based on status and date
     $valuations = array_filter($all_valuations, function ($valuation) use ($status_filter, $date_filter) {
         $matches_status = true;
         $matches_date = true;
@@ -54,8 +71,10 @@ function fetch_user_valuations() {
     $paged = isset($wp_query->query_vars['paged']) ? intval($wp_query->query_vars['paged']) : 1;
     $current_page = $paged > 0 ? $paged : 1;
 
-    $items_per_page = 20;
+    $items_per_page = 20; // Number of valuations per page
     $total_pages = ceil(count($valuations) / $items_per_page);
+
+    // Slice the valuations array for the current page
     $valuations = array_slice($valuations, ($current_page - 1) * $items_per_page, $items_per_page);
 
     // Add-Valuation button
@@ -116,7 +135,7 @@ function fetch_user_valuations() {
     foreach ($valuations as $valuation) {
         $formatted_date = date('j/M/Y', strtotime($valuation->date_created));
         $status = $valuation->evaluation_pdf ? 'Reviewed' : 'Pending Review';
-        $status_info = $status_map[$status] ?? ['Unknown', '#E0E0E0', '#777']; 
+        $status_info = $status_map[$status] ?? ['Unknown', '#E0E0E0', '#777']; // Default Gray
 
         $download_link = $valuation->evaluation_pdf
             ? '<a href="' . esc_url($valuation->evaluation_pdf) . '" download>Download PDF</a>'
@@ -157,11 +176,17 @@ function fetch_user_valuations() {
     }
 }
 
+
+
+
+
+// Function to render the Add Valuation form
 function addvaluation() {
     
     echo do_shortcode('[gravityform id="25" title="true" description="true"]');
 }
 
+// Main logic to determine what to render
 if (isset($_GET['add-val']) && $_GET['add-val'] === 'true') {
     addvaluation();
 } else {

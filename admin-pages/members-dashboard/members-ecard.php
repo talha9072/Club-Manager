@@ -4,16 +4,24 @@ if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
 
+/**
+ * Fetch the Club Logo based on the WooCommerce product's _select_club_id meta key.
+ */
 // Function to fetch the club logo based on product ID
 function fetch_product_club_logo($product_id = null) {
     global $wpdb;
+
+    // Step 1: Check if product_id is present in the URL
     if (isset($_GET['product_id']) && is_numeric($_GET['product_id'])) {
         $product_id = intval($_GET['product_id']);
     }
+
+    // Validate the product_id
     if (!$product_id) {
-        return '';
+        return ''; // Return empty if no product_id is provided
     }
 
+    // Step 2: Get club_id from product meta _select_club_id
     $club_id = $wpdb->get_var(
         $wpdb->prepare(
             "SELECT meta_value 
@@ -26,9 +34,10 @@ function fetch_product_club_logo($product_id = null) {
     );
 
     if (!$club_id) {
-        return ''; 
+        return ''; // Return empty if no club_id is found
     }
 
+    // Step 3: Get the club logo from wp_clubs using the club_id
     $club_logo = $wpdb->get_var(
         $wpdb->prepare(
             "SELECT club_logo 
@@ -38,19 +47,28 @@ function fetch_product_club_logo($product_id = null) {
             $club_id
         )
     );
+
+    // Return the sanitized logo URL or an empty string if not found
     return $club_logo ? esc_url($club_logo) : '';
 }
 
+
+/**
+ * Fetches ECard details for the logged-in user.
+ */
 /**
  * Fetches ECard details for the logged-in user from WooCommerce Subscriptions.
  */
 function fetch_ecard_details($user_id) {
     global $wpdb;
+
+    // Fetch subscription details using the improved SQL query
     // Fetch subscription details with optional URL parameters
     $subscription_id = isset($_GET['subscription_id']) ? intval($_GET['subscription_id']) : null;
     $product_id = isset($_GET['product_id']) ? intval($_GET['product_id']) : null;
 
     if ($subscription_id && $product_id) {
+        // Fetch subscription based on URL parameters
         $subscription = $wpdb->get_row(
             $wpdb->prepare(
                 "SELECT DISTINCT 
@@ -137,115 +155,129 @@ function fetch_ecard_details($user_id) {
         );
     }
 
+
+    // Default placeholders if data is missing
     $subscription_id = $subscription['subscription_id'] ?? 'N/A';
     $product_id = $subscription['product_id'] ?? 0;
     $club_name = get_post_meta($product_id, '_select_club_name', true) ?: '';
     $club_param = urlencode($club_name);
+
     $subscription_plan = $subscription['product_name'] ?? 'N/A';
     $expiry_date = $subscription['schedule_end'] ?? 'N/A';
+
+    // Fetch user meta data
     $first_name = get_user_meta($user_id, 'first_name', true) ?: '';
     $last_name = get_user_meta($user_id, 'last_name', true) ?: '';
 
    // Step 1: Get product_id from URL
-    $product_id = isset($_GET['product_id']) ? intval($_GET['product_id']) : 0;
+$product_id = isset($_GET['product_id']) ? intval($_GET['product_id']) : 0;
 
-    // Default placeholders
-    $ice_contact_name = 'N/A';
-    $ice_contact_number = 'N/A';
-    $partner_first_name = 'N/A';
-    $partner_last_name = 'N/A';
+// Default placeholders
+$ice_contact_name = 'N/A';
+$ice_contact_number = 'N/A';
+$partner_first_name = 'N/A';
+$partner_last_name = 'N/A';
 
-    if ($product_id && is_user_logged_in()) {
-        $user_id = get_current_user_id();
-        $user_info = get_userdata($user_id);
-        $user_email = $user_info ? $user_info->user_email : '';
+if ($product_id && is_user_logged_in()) {
+    $user_id = get_current_user_id();
+    $user_info = get_userdata($user_id);
+    $user_email = $user_info ? $user_info->user_email : '';
 
-        if ($user_email) {
-            global $wpdb;
-            $club_id = $wpdb->get_var(
+    if ($user_email) {
+        global $wpdb;
+
+        // Step 2: Get _select_club_id from product meta
+        $club_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT meta_value FROM {$wpdb->prefix}postmeta
+                 WHERE post_id = %d AND meta_key = '_select_club_id'
+                 LIMIT 1",
+                $product_id
+            )
+        );
+
+        if ($club_id) {
+            // Step 3: Get registration_form from wp_clubs
+            $form_id = $wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT meta_value FROM {$wpdb->prefix}postmeta
-                    WHERE post_id = %d AND meta_key = '_select_club_id'
-                    LIMIT 1",
-                    $product_id
+                    "SELECT registration_form FROM wp_clubs WHERE club_id = %d LIMIT 1",
+                    $club_id
                 )
             );
 
-            if ($club_id) {
-                // Step 3: Get registration_form from wp_clubs
-                $form_id = $wpdb->get_var(
+            if ($form_id) {
+                // Step 4: Find latest entry by email in field ID 7
+                $latest_entry_id = $wpdb->get_var(
                     $wpdb->prepare(
-                        "SELECT registration_form FROM wp_clubs WHERE club_id = %d LIMIT 1",
-                        $club_id
+                        "SELECT e.id
+                         FROM {$wpdb->prefix}gf_entry e
+                         INNER JOIN {$wpdb->prefix}gf_entry_meta em ON e.id = em.entry_id
+                         WHERE e.form_id = %d
+                           AND em.meta_key = 7
+                           AND em.meta_value = %s
+                         ORDER BY e.date_created DESC
+                         LIMIT 1",
+                        $form_id,
+                        $user_email
                     )
                 );
 
-                if ($form_id) {
-                    // Step 4: Find latest entry by email in field ID 7
-                    $latest_entry_id = $wpdb->get_var(
+                if ($latest_entry_id) {
+                    // Step 5: Fetch entry meta
+                    $entry_meta = $wpdb->get_results(
                         $wpdb->prepare(
-                            "SELECT e.id
-                            FROM {$wpdb->prefix}gf_entry e
-                            INNER JOIN {$wpdb->prefix}gf_entry_meta em ON e.id = em.entry_id
-                            WHERE e.form_id = %d
-                            AND em.meta_key = 7
-                            AND em.meta_value = %s
-                            ORDER BY e.date_created DESC
-                            LIMIT 1",
-                            $form_id,
-                            $user_email
-                        )
+                            "SELECT meta_key, meta_value
+                             FROM {$wpdb->prefix}gf_entry_meta
+                             WHERE entry_id = %d",
+                            $latest_entry_id
+                        ),
+                        ARRAY_A
                     );
 
-                    if ($latest_entry_id) {
-                        // Step 5: Fetch entry meta
-                        $entry_meta = $wpdb->get_results(
-                            $wpdb->prepare(
-                                "SELECT meta_key, meta_value
-                                FROM {$wpdb->prefix}gf_entry_meta
-                                WHERE entry_id = %d",
-                                $latest_entry_id
-                            ),
-                            ARRAY_A
-                        );
-
-                        $meta_data = [];
-                        foreach ($entry_meta as $meta) {
-                            $meta_data[$meta['meta_key']] = $meta['meta_value'];
-                        }
-
-                        // Step 6: Extract ICE and Partner fields
-                        $ice_contact_name = $meta_data[84] ?? 'N/A';
-                        $ice_contact_number = $meta_data[85] ?? 'N/A';
-                        $partner_first_name = $meta_data[4] ?? 'N/A';
-                        $partner_last_name = $meta_data[5] ?? 'N/A';
+                    $meta_data = [];
+                    foreach ($entry_meta as $meta) {
+                        $meta_data[$meta['meta_key']] = $meta['meta_value'];
                     }
+
+                    // Step 6: Extract ICE and Partner fields
+                    $ice_contact_name = $meta_data[84] ?? 'N/A';
+                    $ice_contact_number = $meta_data[85] ?? 'N/A';
+                    $partner_first_name = $meta_data[4] ?? 'N/A';
+                    $partner_last_name = $meta_data[5] ?? 'N/A';
                 }
             }
         }
     }
-    
+}
+
+
+
+    // Fetch product club logo
     $club_logo = fetch_product_club_logo($product_id);
 
     // Generate QR Code URL with subscription_id from URL or default
-    $subscription_id_param = isset($_GET['subscription_id']) ? intval($_GET['subscription_id']) : $subscription_id;
-    $qr_code_url = home_url("/check-membership/?userID={$user_id}&subscriptionID={$subscription_id_param}&club={$club_param}");
+        $subscription_id_param = isset($_GET['subscription_id']) ? intval($_GET['subscription_id']) : $subscription_id;
+        $qr_code_url = home_url("/check-membership/?userID={$user_id}&subscriptionID={$subscription_id_param}&club={$club_param}");
 
 
 
     return [
-        'subscription_id'    => $subscription_id,
-        'subscription_plan'  => $subscription_plan,
-        'expiry_date'        => $expiry_date,
+        'subscription_id'    => $subscription_id,  // Changed from 'membership_id' to 'subscription_id'
+        'subscription_plan'  => $subscription_plan, // Changed from 'membership_plan' to 'subscription_plan'
+        'expiry_date'        => $expiry_date,  // Fetching from subscription's `_schedule_end`
         'full_name'          => trim("$first_name $last_name"),
         'club_logo'          => $club_logo,
         'qr_code_url'        => $qr_code_url,
-        'ice_name'           => $ice_contact_name,
-        'ice_number'         => $ice_contact_number,
-        'partner_first_name' => $partner_first_name,
-        'partner_last_name'  => $partner_last_name,
+        'ice_name'           => $ice_contact_name,  // Restored ICE Name
+        'ice_number'         => $ice_contact_number,  // Restored ICE Number
+        'partner_first_name' => $partner_first_name,  // Restored Partner First Name
+        'partner_last_name'  => $partner_last_name,  // Restored Partner Last Name
     ];
 }
+
+
+
+
 
 /**
  * Generates a downloadable PDF of the ECard using jsPDF and html2canvas.
@@ -258,42 +290,56 @@ function render_download_pdf_script() {
     document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('download-ecard').addEventListener('click', function() {
             const eCardElement = document.getElementById('ecard-container');
+
+            // Backup original styles
             const originalTransform = eCardElement.style.transform || '';
             const originalMarginLeft = eCardElement.style.marginLeft || '';
             const originalScale = eCardElement.style.scale || '';
+            const originalWidth = eCardElement.style.width || '';
+            const originalMinWidth = eCardElement.style.minWidth || '';
+            const originalMaxWidth = eCardElement.style.maxWidth || '';
 
-            eCardElement.style.transform = 'none';       
-            eCardElement.style.marginLeft = '0px';       
-            eCardElement.style.scale = '1';               
-            eCardElement.style.width = '600px';         
-            eCardElement.style.minWidth = '600px';        
+            // Set a fixed width for consistent rendering
+            eCardElement.style.transform = 'none';
+            eCardElement.style.marginLeft = '0px';
+            eCardElement.style.scale = '1';
+            eCardElement.style.width = '600px';
+            eCardElement.style.minWidth = '600px';
             eCardElement.style.maxWidth = '600px';
 
             html2canvas(eCardElement, {
-                scale: 3, 
-                useCORS: true,
-                allowTaint: false,
-                logging: false
+                scale: 4, // high resolution for print
+                useCORS: true
             }).then(canvas => {
                 const imgData = canvas.toDataURL('image/png');
                 const pdf = new jspdf.jsPDF('p', 'mm', 'a4');
 
-                const pdfWidth = pdf.internal.pageSize.getWidth();
-                const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                const cardWidth = 90;  // mm
+                const cardHeight = 55; // mm
 
-                pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, '', 'FAST');
+                const pageWidth = pdf.internal.pageSize.getWidth();
+                const pageHeight = pdf.internal.pageSize.getHeight();
+
+                // Center coordinates
+                const x = (pageWidth - cardWidth) / 2;
+                const y = (pageHeight - cardHeight) / 2;
+
+                pdf.addImage(imgData, 'PNG', x, y, cardWidth, cardHeight, '', 'FAST');
                 pdf.save('membership_ecard.pdf');
 
+                // Restore styles
                 eCardElement.style.transform = originalTransform;
                 eCardElement.style.marginLeft = originalMarginLeft;
                 eCardElement.style.scale = originalScale;
+                eCardElement.style.width = originalWidth;
+                eCardElement.style.minWidth = originalMinWidth;
+                eCardElement.style.maxWidth = originalMaxWidth;
             });
         });
     });
     </script>
     <?php
 }
-
 
 /**
  * Renders the ECard HTML
@@ -364,6 +410,9 @@ function render_user_ecard() {
     <?php render_download_pdf_script(); ?>
     <?php
 }
+
+
+
 
 // Display the ECard immediately when this file is loaded
 render_user_ecard();

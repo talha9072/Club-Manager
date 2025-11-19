@@ -1,15 +1,17 @@
 <?php
 // File: admin-pages/dashboard/manager-membership.php
 if (!defined('ABSPATH')) {
-    exit;
+    exit; // Exit if accessed directly
 }
 
 // Fetch the status of a specific membership ID dynamically
 function get_membership_status($membership_id) {
     global $wpdb;
+
     if (!$membership_id || $membership_id === 'N/A') {
         return 'N/A';
     }
+
     $status = $wpdb->get_var(
         $wpdb->prepare(
             "SELECT post_status 
@@ -18,6 +20,7 @@ function get_membership_status($membership_id) {
             $membership_id
         )
     );
+
     $status_map = [
         'wcm-active' => 'Active',
         'wcm-pending' => 'Pending',
@@ -25,17 +28,21 @@ function get_membership_status($membership_id) {
         'wcm-cancelled' => 'Cancelled',
         'wcm-expired' => 'Expired',
     ];
+
     return isset($status_map[$status]) ? $status_map[$status] : ucfirst(str_replace('wcm-', '', $status));
 }
 
 // Fetch the current user's subscriptions with detailed plan details
 function get_logged_in_user_memberships() {
     global $wpdb;
+
     $current_user = wp_get_current_user();
     if (!$current_user->exists()) {
         return [];
     }
+
     $user_id = $current_user->ID;
+
     $memberships = $wpdb->get_results(
         $wpdb->prepare(
             "SELECT 
@@ -60,7 +67,7 @@ function get_logged_in_user_memberships() {
             JOIN 
                 wp_postmeta pm ON s.ID = pm.post_id AND pm.meta_key = '_customer_user'
             JOIN 
-                wp_users u ON u.ID = pm.meta_value
+                wp_users u ON u.ID = pm.meta_value  -- Fetch user details
             JOIN 
                 wp_woocommerce_order_items oi ON s.ID = oi.order_id
             JOIN 
@@ -83,8 +90,15 @@ function get_logged_in_user_memberships() {
         ),
         ARRAY_A
     );
+
     return $memberships;
 }
+
+
+
+
+
+
 
 // Function to render the subscription table for the logged-in user
 function render_logged_in_user_membership_table($memberships) {
@@ -92,24 +106,29 @@ function render_logged_in_user_membership_table($memberships) {
         echo '<p>No subscriptions found for your account.</p>';
         return;
     }
+
     // Pagination Logic
     global $wp_query;
     $paged = isset($wp_query->query_vars['paged']) ? intval($wp_query->query_vars['paged']) : 1;
     $current_page = $paged > 0 ? $paged : 1;
 
-    $items_per_page = 20;
+    $items_per_page = 20; // Number of subscriptions per page
     $total_pages = ceil(count($memberships) / $items_per_page);
+
+    // Slice the memberships array for the current page
     $memberships_to_display = array_slice($memberships, ($current_page - 1) * $items_per_page, $items_per_page);
+
+    // WooCommerce Subscription Status Colors
     $status_map = [
-        'Active' => ['Active', '#C6E1C6', '#5B841B'],   
-        'Pending' => ['Pending', '#F8D7DA', '#721C24'],  
-        'On Hold' => ['On Hold', '#FCE58B', '#946C00'],  
-        'Cancelled' => ['Cancelled', '#E0E0E0', '#777'], 
-        'Expired' => ['Expired', '#FFA07A', '#D9534F'],  
+        'Active' => ['Active', '#C6E1C6', '#5B841B'],   // Green
+        'Pending' => ['Pending', '#F8D7DA', '#721C24'],  // Light Red
+        'On Hold' => ['On Hold', '#FCE58B', '#946C00'],  // Yellow
+        'Cancelled' => ['Cancelled', '#E0E0E0', '#777'], // Gray
+        'Expired' => ['Expired', '#FFA07A', '#D9534F'],  // Light Orange-Red
     ];
+
     // Render Table
     ?>
-
     <table style="width: 100%; border-collapse: collapse;"class="wp-list-table widefat fixed striped managertable"id="membership-table">
         <h2 class="manager-h2">Membership</h2>
         <thead>
@@ -124,13 +143,16 @@ function render_logged_in_user_membership_table($memberships) {
             </tr>
         </thead>
         <tbody>
-                <?php foreach ($memberships_to_display as $membership) : 
-                    $raw_status = $membership['subscription_status'] ?? 'Unknown';
-                    $status_info = $status_map[$raw_status] ?? ['Unknown', '#FFA07A', '#D9534F']; 
-                    $formatted_total = 'R' . number_format((float) ($membership['total_amount'] ?? 0), 2);
-                    if (!empty($membership['billing_period'])) {
-                        $formatted_total .= ' / ' . esc_html($membership['billing_period']);
-                    }
+            <?php foreach ($memberships_to_display as $membership) : 
+                // Get the formatted status
+                $raw_status = $membership['subscription_status'] ?? 'Unknown';
+                $status_info = $status_map[$raw_status] ?? ['Unknown', '#FFA07A', '#D9534F']; // Default WooCommerce "error" styling
+
+                // Format total with billing period
+                $formatted_total = 'R' . number_format((float) ($membership['total_amount'] ?? 0), 2);
+                if (!empty($membership['billing_period'])) {
+                    $formatted_total .= ' / ' . esc_html($membership['billing_period']);
+                }
 
                 ?>
                 <tr style="border-bottom: 1px solid #ddd;">
@@ -158,66 +180,77 @@ function render_logged_in_user_membership_table($memberships) {
                         </span>
                     </td>
                     <td style="padding: 10px;" data-label="Action">
-                        <?php
-                        $allowed_statuses = ['active', 'expired', 'cancelled'];
-                        $current_status = strtolower(trim($membership['subscription_status'] ?? ''));
-                        if (in_array($current_status, $allowed_statuses, true)): 
-                        ?>
-                        <button 
-                            class="renew-subscription-btn action-item" 
-                            data-subscription-id="<?php echo esc_attr($membership['subscription_id']); ?>" 
-                            style="padding: 5px 10px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">
-                            Renew
-                        </button>
-                        <?php endif; ?>
-                    </td>
+    <?php
+        // Get status clearly and normalize
+        $allowed_statuses = ['active', 'expired', 'cancelled'];
+        $current_status = strtolower(trim($membership['subscription_status'] ?? ''));
+
+        if (in_array($current_status, $allowed_statuses, true)): 
+    ?>
+        <button 
+            class="renew-subscription-btn action-item" 
+            data-subscription-id="<?php echo esc_attr($membership['subscription_id']); ?>" 
+            style="padding: 5px 10px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">
+            Renew
+        </button>
+    <?php endif; ?>
+</td>
 
                 </tr>
             <?php endforeach; ?>
-
         </tbody>
     </table>
-
     <script>
-        jQuery(document).ready(function ($) {
-            $('.renew-subscription-btn').on('click', function () {
-                const subscriptionId = $(this).data('subscription-id');
-                const nonce = '<?php echo wp_create_nonce('renew_subscription_nonce'); ?>';
-                if (!confirm('Are you sure you want to renew this subscription?')) {
-                    return;
+jQuery(document).ready(function ($) {
+    $('.renew-subscription-btn').on('click', function () {
+        const subscriptionId = $(this).data('subscription-id');
+        const nonce = '<?php echo wp_create_nonce('renew_subscription_nonce'); ?>';
+
+        // Confirm renewal
+        if (!confirm('Are you sure you want to renew this subscription?')) {
+            return;
+        }
+
+        // Disable button to prevent multiple clicks
+        $(this).prop('disabled', true).text('Renewing...');
+
+        $.ajax({
+            type: 'POST',
+            url: '<?php echo admin_url('admin-ajax.php'); ?>',
+            data: {
+                action: 'renew_subscription_unique',
+                subscription_id: subscriptionId,
+                _ajax_nonce: nonce
+            },
+            beforeSend: function () {
+                console.log('Renewing subscription ID: ' + subscriptionId);
+            },
+            success: function (response) {
+                if (response.success) {
+                    alert('Subscription renewed successfully!');
+                    location.reload();
+                } else {
+                    alert('Renewal failed: ' + response.data.message);
+                    $('.renew-subscription-btn').prop('disabled', false).text('Renew');
                 }
-                $(this).prop('disabled', true).text('Renewing...');
-                $.ajax({
-                    type: 'POST',
-                    url: '<?php echo admin_url('admin-ajax.php'); ?>',
-                    data: {
-                        action: 'renew_subscription_unique',
-                        subscription_id: subscriptionId,
-                        _ajax_nonce: nonce
-                    },
-                    beforeSend: function () {
-                        console.log('Renewing subscription ID: ' + subscriptionId);
-                    },
-                    success: function (response) {
-                        if (response.success) {
-                            alert('Subscription renewed successfully!');
-                            location.reload();
-                        } else {
-                            alert('Renewal failed: ' + response.data.message);
-                            $('.renew-subscription-btn').prop('disabled', false).text('Renew');
-                        }
-                    },
-                    error: function () {
-                        alert('AJAX request failed.');
-                        $('.renew-subscription-btn').prop('disabled', false).text('Renew');
-                    }
-                });
-            });
+            },
+            error: function () {
+                alert('AJAX request failed.');
+                $('.renew-subscription-btn').prop('disabled', false).text('Renew');
+            }
         });
-    </script>
+    });
+});
+</script>
 
     <?php
 }
+
+
+
+
+
+
 
 
 // Fetch and render the logged-in user's memberships

@@ -720,6 +720,126 @@ add_action('init', function() {
 
 
 
+// ==============================
+// AJAX handler: Export Event Orders to CSV
+// ==============================
+function my_event_csv_ajax() {
+    global $wpdb;
+
+    $e_id = isset($_POST['event_id']) ? intval($_POST['event_id']) : 0;
+    if (!$e_id) {
+        wp_die('Invalid Event ID');
+    }
+
+    $pid = get_post_meta($e_id, 'tx_woocommerce_product_id', true);
+    if (empty($pid)) {
+        wp_die('No product linked to this event.');
+    }
+
+    $event = get_post($e_id);
+    if (!$event) {
+        wp_die('Event not found.');
+    }
+
+    $event_title = sanitize_title($event->post_title);
+
+    $headers = [
+        'Name','Email','Company','Address','Phone',
+        'Ticket IDs','Quantity','Ticket Type',
+        'Event Time','Order Status','Ordered Date'
+    ];
+
+    // Core query (similar to plugin)
+    $query = $wpdb->prepare("
+        SELECT 
+            o.ID AS order_id,
+            o.post_date AS ordered_date,
+            REPLACE(o.post_status,'wc-','') AS order_status,
+            oi.order_item_id,
+
+            (SELECT meta_value FROM {$wpdb->postmeta} 
+             WHERE post_id = o.ID AND meta_key = '_billing_first_name' LIMIT 1) AS First_Name,
+            (SELECT meta_value FROM {$wpdb->postmeta} 
+             WHERE post_id = o.ID AND meta_key = '_billing_last_name' LIMIT 1) AS Last_Name,
+            (SELECT meta_value FROM {$wpdb->postmeta} 
+             WHERE post_id = o.ID AND meta_key = '_billing_email' LIMIT 1) AS Email,
+            (SELECT meta_value FROM {$wpdb->postmeta} 
+             WHERE post_id = o.ID AND meta_key = '_billing_company' LIMIT 1) AS Company,
+            (SELECT meta_value FROM {$wpdb->postmeta} 
+             WHERE post_id = o.ID AND meta_key = '_billing_address_1' LIMIT 1) AS Address,
+            (SELECT meta_value FROM {$wpdb->postmeta} 
+             WHERE post_id = o.ID AND meta_key = '_billing_phone' LIMIT 1) AS Phone,
+
+            (SELECT meta_value FROM {$wpdb->prefix}woocommerce_order_itemmeta 
+             WHERE order_item_id = oi.order_item_id AND meta_key = '_qty' LIMIT 1) AS Quantity,
+
+            (SELECT meta_value FROM {$wpdb->prefix}woocommerce_order_itemmeta 
+             WHERE order_item_id = oi.order_item_id AND meta_key = 'Event-Time' LIMIT 1) AS Event_Time,
+
+            -- Ticket Type (variation attribute if exists, else Normal)
+            COALESCE(
+              (SELECT meta_value 
+                 FROM {$wpdb->prefix}woocommerce_order_itemmeta 
+                WHERE order_item_id = oi.order_item_id 
+                  AND meta_key LIKE 'attribute_%%'
+                LIMIT 1),
+              'Normal'
+            ) AS Ticket_Type
+
+        FROM {$wpdb->posts} o
+        JOIN {$wpdb->prefix}woocommerce_order_items oi 
+            ON o.ID = oi.order_id
+        JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim 
+            ON oi.order_item_id = oim.order_item_id 
+            AND oim.meta_key = '_product_id'
+        WHERE o.post_type = 'shop_order'
+          AND oim.meta_value = %d
+        ORDER BY o.post_date DESC
+    ", $pid);
+
+    $rows = $wpdb->get_results($query);
+
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $event_title . '_' . date('d-m-Y') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $out = fopen('php://output', 'w');
+    fputcsv($out, $headers);
+
+    foreach ($rows as $r) {
+        $name = trim(($r->First_Name ?: '') . ' ' . ($r->Last_Name ?: ''));
+        $qty  = intval($r->Quantity ?: 1);
+
+        // Expand one row per ticket
+        for ($i = 0; $i < $qty; $i++) {
+            $ticket_id = $r->order_item_id . '-' . $r->order_id . '-' . $pid . 'T' . $i;
+
+            fputcsv($out, [
+                $name,
+                $r->Email,
+                $r->Company,
+                $r->Address,
+                $r->Phone,
+                $ticket_id,
+                1, // always 1 per ticket row
+                $r->Ticket_Type,
+                $r->Event_Time,
+                $r->order_status,
+                $r->ordered_date,
+            ]);
+        }
+    }
+
+    fclose($out);
+    wp_die();
+}
+add_action('wp_ajax_my_event_csv', 'my_event_csv_ajax');
+add_action('wp_ajax_nopriv_my_event_csv', 'my_event_csv_ajax');
 
 
 ?>

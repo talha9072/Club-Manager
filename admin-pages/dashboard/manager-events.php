@@ -273,63 +273,31 @@ function fetch_events_for_club($filters = [], $pagination = []) {
 function render_pagination($current_page, $total_pages) {
     if ($total_pages <= 1) return;
 
-    $range = 2; // current page ke aage/peeche kitne dikhane hain
-    $start = max(1, $current_page - $range);
-    $end   = min($total_pages, $current_page + $range);
-
-    echo '<div class="pagination" style="margin:20px 0; text-align:center;">';
+    echo '<div class="pagination" style="margin-top: 20px; text-align: center;">';
 
     // Previous Button
     if ($current_page > 1) {
         echo '<a href="' . esc_url(add_query_arg('paged', $current_page - 1)) . '" 
-              style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
-              &laquo; Prev
+              style="margin: 0 5px; padding: 5px 10px; border: 1px solid #ddd; text-decoration: none; color: #333;">
+              Previous
               </a>';
     }
 
-    // First Page + Dots
-    if ($start > 1) {
-        echo '<a href="' . esc_url(add_query_arg('paged', 1)) . '" 
-              style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
-              1
-              </a>';
-        if ($start > 2) {
-            echo '<span style="margin:0 5px; padding:6px 12px; color:#666;">...</span>';
-        }
-    }
-
-    // Page Loop
-    for ($i = $start; $i <= $end; $i++) {
-        if ($i == $current_page) {
-            // ✅ Active page highlight
-            echo '<span style="margin:0 5px; padding:6px 12px; border:1px solid #10487B; 
-                    background:#10487B; color:#fff; font-weight:bold;">
-                    ' . $i . '
-                  </span>';
-        } else {
-            echo '<a href="' . esc_url(add_query_arg('paged', $i)) . '" 
-                  style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
-                  ' . $i . '
-                  </a>';
-        }
-    }
-
-    // Last Page + Dots
-    if ($end < $total_pages) {
-        if ($end < $total_pages - 1) {
-            echo '<span style="margin:0 5px; padding:6px 12px; color:#666;">...</span>';
-        }
-        echo '<a href="' . esc_url(add_query_arg('paged', $total_pages)) . '" 
-              style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
-              ' . $total_pages . '
+    // Page Numbers
+    for ($i = 1; $i <= $total_pages; $i++) {
+        echo '<a href="' . esc_url(add_query_arg('paged', $i)) . '" 
+              class="' . ($i == $current_page ? 'current' : '') . '" 
+              style="margin: 0 5px; padding: 5px 10px; border: 1px solid #ddd; text-decoration: none; 
+              ' . ($i == $current_page ? 'background: #10487B; color: #fff;' : 'color: #333;') . '">
+              ' . $i . '
               </a>';
     }
 
     // Next Button
     if ($current_page < $total_pages) {
         echo '<a href="' . esc_url(add_query_arg('paged', $current_page + 1)) . '" 
-              style="margin:0 5px; padding:6px 12px; border:1px solid #ddd; text-decoration:none; color:#333;">
-              Next &raquo;
+              style="margin: 0 5px; padding: 5px 10px; border: 1px solid #ddd; text-decoration: none; color: #333;">
+              Next
               </a>';
     }
 
@@ -492,19 +460,11 @@ function render_events_table($user_club_name, $events_data, $filters = [], $pagi
                                     </span>
                                 </td>
 
-                                <td data-label="Download">
-                                    <?php if (strtolower($event->tickets) !== 'no') : ?>
-                                        <?php $nonce = wp_create_nonce('eventon_download_events'); ?>
-                                        <a href="#"
-                                        class="download-csv"
-                                        data-event-id="<?php echo esc_attr($event->event_id); ?>"
-                                        data-nonce="<?php echo esc_attr($nonce); ?>">
-                                            <i class="fa fa-download" style="color: #10487B; font-size: 24px;"></i>
-                                        </a>
-                                    <?php else : ?>
-                                        NA
-                                    <?php endif; ?>
-                                </td>
+                                <td>
+    <a href="#" class="download-csv" data-event-id="<?php echo esc_attr($event->event_id); ?>">
+        <i class="fa fa-download" style="color:#10487B; font-size:24px;"></i>
+    </a>
+</td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else : ?>
@@ -520,28 +480,43 @@ function render_events_table($user_club_name, $events_data, $filters = [], $pagi
     </div>
 
     <script>
-        function toggleAllCheckboxes(selectAllCheckbox) {
-            document.querySelectorAll('.event-checkbox').forEach(function(checkbox) {
-                checkbox.checked = selectAllCheckbox.checked;
-            });
-        }
-
-        document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('.download-csv').forEach(function(link) {
-        link.addEventListener('click', function(event) {
-            event.preventDefault();
-            event.stopImmediatePropagation();
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
 
             const eventId = this.getAttribute('data-event-id');
-            const nonce   = this.getAttribute('data-nonce');
 
-            const downloadUrl = `/wp-admin/admin-ajax.php?action=eventon_export_events&eid=${eventId}&nonce=${nonce}`;
-            window.location.href = downloadUrl;
+            const formData = new FormData();
+            formData.append('action', 'my_event_csv');
+            formData.append('event_id', eventId);
+
+            fetch("<?php echo admin_url('admin-ajax.php'); ?>", {
+                method: "POST",
+                body: formData,
+                credentials: 'same-origin'
+            })
+            .then(response => {
+                if (!response.ok) throw new Error("Network response was not ok");
+                return response.blob();
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "event_" + eventId + ".csv";
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(err => {
+                alert("Download failed: " + err.message);
+            });
         });
     });
 });
-
-    </script>
+</script>
     <?php
 }
 
