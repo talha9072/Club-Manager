@@ -842,4 +842,101 @@ add_action('wp_ajax_my_event_csv', 'my_event_csv_ajax');
 add_action('wp_ajax_nopriv_my_event_csv', 'my_event_csv_ajax');
 
 
+
+add_action('wp_head', function () {
+
+    if (is_admin()) return;
+
+    global $wpdb;
+
+    $rows = $wpdb->get_results("
+        SELECT 
+            p.ID as product_id,
+            IFNULL(c.club_currency, 'R') as club_currency
+        FROM wp_posts p
+        LEFT JOIN wp_postmeta pm 
+            ON pm.post_id = p.ID AND pm.meta_key = '_select_club_id'
+        LEFT JOIN wp_clubs c 
+            ON c.club_id = pm.meta_value
+        WHERE p.post_type = 'product' AND p.post_status = 'publish'
+    ");
+
+    $map = [];
+    foreach ($rows as $r) {
+        $map[(int)$r->product_id] = $r->club_currency ?: 'R';
+    }
+?>
+<script>
+window.productCurrencyMap = <?php echo json_encode($map); ?>;
+console.log("🟢 MAP READY:", window.productCurrencyMap);
+</script>
+<?php
+});
+
+add_action('wp_head', function () {
+    if (is_admin()) return;
+?>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    console.log("⚡ GLOBAL INIT");
+
+    const map = window.productCurrencyMap || {};
+
+    function updatePrices() {
+        const items = document.querySelectorAll("li.product");
+
+        console.log("📦 Found products:", items.length);
+
+        items.forEach(li => {
+
+            if (li.dataset.currencyUpdated === "1") return;
+
+            const idClass = [...li.classList].find(c => c.startsWith("post-"));
+            if (!idClass) return;
+
+            const pid = idClass.replace("post-", "");
+            const currency = map[pid];
+
+            if (!currency) return;
+
+            // Try every possible price selector
+            let priceContainers = li.querySelectorAll(".price, .amount, bdi, span");
+
+            priceContainers.forEach(el => {
+                let html = el.innerHTML;
+
+                // Replace standalone R
+                html = html.replace(/R(?=\d)/g, currency);
+
+                // Replace <span>R</span>
+                html = html.replace(/<span[^>]*>R<\/span>/g, `<span>${currency}</span>`);
+
+                // Replace currency symbol inside <bdi>
+                html = html.replace(/<bdi>R/g, `<bdi>${currency}`);
+
+                el.innerHTML = html;
+            });
+
+            li.dataset.currencyUpdated = "1";
+
+            console.log(`🔄 Updated product ${pid} → ${currency}`);
+        });
+    }
+
+    updatePrices();
+
+    const observer = new MutationObserver(() => updatePrices());
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    console.log("👀 Observer Active");
+});
+</script>
+<?php
+});
+
+
+
+
+
 ?>
