@@ -849,6 +849,9 @@ add_action('wp_head', function () {
 
     global $wpdb;
 
+    /******************************************
+     * STEP 1: Build Product → Currency Map
+     ******************************************/
     $rows = $wpdb->get_results("
         SELECT 
             p.ID as product_id,
@@ -865,75 +868,129 @@ add_action('wp_head', function () {
     foreach ($rows as $r) {
         $map[(int)$r->product_id] = $r->club_currency ?: 'R';
     }
-?>
-<script>
-window.productCurrencyMap = <?php echo json_encode($map); ?>;
-console.log("🟢 MAP READY:", window.productCurrencyMap);
-</script>
-<?php
+
+    ?>
+    <script>
+    /******************************************
+     * JS MAP + PRICE UPDATER
+     ******************************************/
+    window.productCurrencyMap = <?php echo json_encode($map); ?>;
+    console.log("🟢 MAP READY:", window.productCurrencyMap);
+
+    document.addEventListener("DOMContentLoaded", function () {
+
+        console.log("⚡ GLOBAL INIT");
+
+        const map = window.productCurrencyMap || {};
+
+        function updatePrices() {
+            const items = document.querySelectorAll("li.product");
+
+            console.log("📦 Found products:", items.length);
+
+            items.forEach(li => {
+
+                if (li.dataset.currencyUpdated === "1") return;
+
+                const idClass = [...li.classList].find(c => c.startsWith("post-"));
+                if (!idClass) return;
+
+                const pid = idClass.replace("post-", "");
+                const currency = map[pid];
+
+                if (!currency) return;
+
+                // Try all possible Woocommerce / Divi price wrappers
+                let priceContainers = li.querySelectorAll(".price, .amount, bdi, span");
+
+                priceContainers.forEach(el => {
+                    let html = el.innerHTML;
+
+                    // Replace standalone R before digits
+                    html = html.replace(/R(?=\d)/g, currency);
+
+                    // Replace <span>R</span>
+                    html = html.replace(/<span[^>]*>R<\/span>/g, `<span>${currency}</span>`);
+
+                    // Replace inside <bdi>
+                    html = html.replace(/<bdi>R/g, `<bdi>${currency}`);
+
+                    el.innerHTML = html;
+                });
+
+                li.dataset.currencyUpdated = "1";
+
+                console.log(`🔄 Updated product ${pid} → ${currency}`);
+            });
+        }
+
+        updatePrices();
+
+        const observer = new MutationObserver(() => updatePrices());
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        console.log("👀 Observer Active");
+    });
+    </script>
+    <?php
 });
 
+
+/**********************************************
+ * SINGLE PRODUCT PAGE – REPLACE CURRENCY
+ **********************************************/
 add_action('wp_head', function () {
-    if (is_admin()) return;
+
+    if (!is_product() || is_admin()) return;
+
+    global $post, $wpdb;
+
+    // Product ID
+    $product_id = $post->ID;
+
+    // Fetch club_id
+    $club_id = get_post_meta($product_id, '_select_club_id', true);
+
+    if (empty($club_id)) return;
+
+    // Fetch club currency
+    $club_currency = $wpdb->get_var(
+        $wpdb->prepare("SELECT IFNULL(club_currency, 'R') FROM wp_clubs WHERE club_id = %d", $club_id)
+    );
+
+    if (empty($club_currency)) $club_currency = "R"; // fallback
 ?>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
 
-    console.log("⚡ GLOBAL INIT");
+    console.log("📌 SINGLE PRODUCT PAGE INIT");
 
-    const map = window.productCurrencyMap || {};
+    let currency = "<?php echo esc_js($club_currency); ?>";
 
-    function updatePrices() {
-        const items = document.querySelectorAll("li.product");
+    console.log("💰 Club Currency:", currency);
 
-        console.log("📦 Found products:", items.length);
+    // Replace currency symbol inside single product price
+    const priceElements = document.querySelectorAll(".price, .woocommerce-Price-currencySymbol, bdi, span");
 
-        items.forEach(li => {
+    priceElements.forEach(el => {
+        let html = el.innerHTML;
 
-            if (li.dataset.currencyUpdated === "1") return;
+        // Replace the WooCommerce currency symbol
+        html = html.replace(/<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
+                            `<span class="woocommerce-Price-currencySymbol">${currency}</span>`);
 
-            const idClass = [...li.classList].find(c => c.startsWith("post-"));
-            if (!idClass) return;
+        // Replace raw R before numbers
+        html = html.replace(/R(?=\d)/g, currency);
 
-            const pid = idClass.replace("post-", "");
-            const currency = map[pid];
+        el.innerHTML = html;
+    });
 
-            if (!currency) return;
-
-            // Try every possible price selector
-            let priceContainers = li.querySelectorAll(".price, .amount, bdi, span");
-
-            priceContainers.forEach(el => {
-                let html = el.innerHTML;
-
-                // Replace standalone R
-                html = html.replace(/R(?=\d)/g, currency);
-
-                // Replace <span>R</span>
-                html = html.replace(/<span[^>]*>R<\/span>/g, `<span>${currency}</span>`);
-
-                // Replace currency symbol inside <bdi>
-                html = html.replace(/<bdi>R/g, `<bdi>${currency}`);
-
-                el.innerHTML = html;
-            });
-
-            li.dataset.currencyUpdated = "1";
-
-            console.log(`🔄 Updated product ${pid} → ${currency}`);
-        });
-    }
-
-    updatePrices();
-
-    const observer = new MutationObserver(() => updatePrices());
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    console.log("👀 Observer Active");
+    console.log("✅ Single Product Price Updated →", currency);
 });
 </script>
 <?php
 });
+
 
 
 
