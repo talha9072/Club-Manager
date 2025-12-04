@@ -43,13 +43,14 @@ function get_logged_in_user_memberships() {
 
     $user_id = $current_user->ID;
 
+    // ⭐ ORIGINAL SQL — UNTOUCHED (DO NOT MODIFY)
     $memberships = $wpdb->get_results(
         $wpdb->prepare(
             "SELECT 
                 s.ID AS subscription_id,
                 MAX(u.display_name) AS member_name,  
                 MAX(u.user_email) AS email,  
-                GROUP_CONCAT(DISTINCT p.post_title ORDER BY p.post_title SEPARATOR ', ') AS membership_plan,  -- Merge multiple products
+                GROUP_CONCAT(DISTINCT p.post_title ORDER BY p.post_title SEPARATOR ', ') AS membership_plan,
                 CASE 
                     WHEN MAX(s.post_status) = 'wc-active' THEN 'Active'
                     WHEN MAX(s.post_status) = 'wc-pending' THEN 'Pending'
@@ -58,30 +59,30 @@ function get_logged_in_user_memberships() {
                     WHEN MAX(s.post_status) = 'wc-expired' THEN 'Expired'
                     ELSE 'Unknown'
                 END AS subscription_status,
-                DATE_FORMAT(MAX(next_payment.meta_value), '%%d/%%m/%%Y') AS next_payment_date,  
-                DATE_FORMAT(MAX(end_date.meta_value), '%%d/%%m/%%Y') AS subscription_end_date,  
+                DATE_FORMAT(MAX(next_payment.meta_value), '%%d/%%m/%%Y') AS next_payment_date,
+                DATE_FORMAT(MAX(end_date.meta_value), '%%d/%%m/%%Y') AS subscription_end_date,
                 MAX(total.meta_value) AS total_amount,
                 MAX(billing.meta_value) AS billing_period
             FROM 
                 wp_posts s
-            JOIN 
-                wp_postmeta pm ON s.ID = pm.post_id AND pm.meta_key = '_customer_user'
-            JOIN 
-                wp_users u ON u.ID = pm.meta_value  -- Fetch user details
-            JOIN 
-                wp_woocommerce_order_items oi ON s.ID = oi.order_id
-            JOIN 
-                wp_woocommerce_order_itemmeta oim ON oi.order_item_id = oim.order_item_id AND oim.meta_key = '_product_id'
-            JOIN 
-                wp_posts p ON oim.meta_value = p.ID
-            LEFT JOIN 
-                wp_postmeta next_payment ON s.ID = next_payment.post_id AND next_payment.meta_key = '_schedule_next_payment'
-            LEFT JOIN 
-                wp_postmeta end_date ON s.ID = end_date.post_id AND end_date.meta_key = '_schedule_end'
-            LEFT JOIN 
-                wp_postmeta total ON s.ID = total.post_id AND total.meta_key = '_order_total'
-            LEFT JOIN 
-                wp_postmeta billing ON s.ID = billing.post_id AND billing.meta_key = '_billing_period'
+            JOIN wp_postmeta pm 
+                ON s.ID = pm.post_id AND pm.meta_key = '_customer_user'
+            JOIN wp_users u 
+                ON u.ID = pm.meta_value
+            JOIN wp_woocommerce_order_items oi 
+                ON s.ID = oi.order_id
+            JOIN wp_woocommerce_order_itemmeta oim 
+                ON oi.order_item_id = oim.order_item_id AND oim.meta_key = '_product_id'
+            JOIN wp_posts p 
+                ON oim.meta_value = p.ID
+            LEFT JOIN wp_postmeta next_payment 
+                ON s.ID = next_payment.post_id AND next_payment.meta_key = '_schedule_next_payment'
+            LEFT JOIN wp_postmeta end_date 
+                ON s.ID = end_date.post_id AND end_date.meta_key = '_schedule_end'
+            LEFT JOIN wp_postmeta total 
+                ON s.ID = total.post_id AND total.meta_key = '_order_total'
+            LEFT JOIN wp_postmeta billing 
+                ON s.ID = billing.post_id AND billing.meta_key = '_billing_period'
             WHERE 
                 s.post_type = 'shop_subscription'
                 AND pm.meta_value = %d
@@ -91,8 +92,65 @@ function get_logged_in_user_memberships() {
         ARRAY_A
     );
 
+    // ⭐ SAFE ADD: club_id + club_currency for each subscription
+    foreach ($memberships as &$m) {
+
+        $subscription_id = $m['subscription_id'];
+
+        // 1️⃣ Get product_id inside this subscription
+        $product_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT oim.meta_value
+                 FROM wp_woocommerce_order_items oi
+                 JOIN wp_woocommerce_order_itemmeta oim
+                     ON oi.order_item_id = oim.order_item_id
+                 WHERE oi.order_id = %d
+                   AND oim.meta_key = '_product_id'
+                 LIMIT 1",
+                $subscription_id
+            )
+        );
+
+        if (!$product_id) {
+            $m['currency_icon'] = "R";
+            continue;
+        }
+
+        // 2️⃣ Get club_id from product
+        $club_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT meta_value 
+                 FROM wp_postmeta 
+                 WHERE post_id = %d 
+                   AND meta_key = '_select_club_id'
+                 LIMIT 1",
+                $product_id
+            )
+        );
+
+        if (!$club_id) {
+            $m['currency_icon'] = "R";
+            continue;
+        }
+
+        // 3️⃣ Get currency from wp_clubs
+        $club_currency = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT club_currency 
+                 FROM wp_clubs 
+                 WHERE club_id = %d
+                 LIMIT 1",
+                $club_id
+            )
+        );
+
+        // 4️⃣ Assign (fallback R)
+        $m['currency_icon'] = $club_currency ?: "R";
+    }
+
     return $memberships;
 }
+
 
 
 
@@ -149,7 +207,7 @@ function render_logged_in_user_membership_table($memberships) {
                 $status_info = $status_map[$raw_status] ?? ['Unknown', '#FFA07A', '#D9534F']; // Default WooCommerce "error" styling
 
                 // Format total with billing period
-                $formatted_total = 'R' . number_format((float) ($membership['total_amount'] ?? 0), 2);
+                $formatted_total = ($membership['currency_icon'] ?? 'R') . number_format((float) ($membership['total_amount'] ?? 0), 2);
                 if (!empty($membership['billing_period'])) {
                     $formatted_total .= ' / ' . esc_html($membership['billing_period']);
                 }

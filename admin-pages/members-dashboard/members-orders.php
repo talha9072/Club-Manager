@@ -23,12 +23,15 @@ function get_user_orders($user_id, $filters = [], $pagination = []) {
     // Check for product_id in URL
     $product_id = isset($_GET['product_id']) ? intval($_GET['product_id']) : null;
 
-    // Pehle product ka club_id nikaalo agar product_id hai
+    // Get product club ID if product_id is given
     $club_id = null;
     if ($product_id) {
         $club_id = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT meta_value FROM {$wpdb->prefix}postmeta WHERE post_id = %d AND meta_key = '_select_club_id' LIMIT 1",
+                "SELECT meta_value 
+                 FROM {$wpdb->prefix}postmeta 
+                 WHERE post_id = %d AND meta_key = '_select_club_id' 
+                 LIMIT 1",
                 $product_id
             )
         );
@@ -55,19 +58,24 @@ function get_user_orders($user_id, $filters = [], $pagination = []) {
         $query_params[] = '%' . $filters['search'] . '%';
     }
 
-    // Product filter replaced by club filter if club_id exists
+    // If product_id exists → filter by club_id of that product
     $product_join = '';
     if ($club_id) {
         $product_join = "
-            INNER JOIN {$wpdb->prefix}woocommerce_order_items oi ON p.ID = oi.order_id
-            INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_product ON oi.order_item_id = oim_product.order_item_id AND oim_product.meta_key = '_product_id'
-            INNER JOIN {$wpdb->prefix}postmeta product_club ON product_club.post_id = oim_product.meta_value AND product_club.meta_key = '_select_club_id'
+            INNER JOIN {$wpdb->prefix}woocommerce_order_items oi 
+                ON p.ID = oi.order_id
+            INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_product 
+                ON oi.order_item_id = oim_product.order_item_id 
+                AND oim_product.meta_key = '_product_id'
+            INNER JOIN {$wpdb->prefix}postmeta product_club 
+                ON product_club.post_id = oim_product.meta_value 
+                AND product_club.meta_key = '_select_club_id'
         ";
         $query_conditions[] = "product_club.meta_value = %s";
         $query_params[] = $club_id;
     }
 
-    // Combine conditions
+    // Generate WHERE conditions
     $query_condition_string = !empty($query_conditions) ? 'AND ' . implode(' AND ', $query_conditions) : '';
 
     // Pagination
@@ -77,36 +85,95 @@ function get_user_orders($user_id, $filters = [], $pagination = []) {
     $query_params[] = $limit;
     $query_params[] = $offset;
 
-    // Main orders query
+    // ================================
+    // MAIN QUERY + CLUB CURRENCY JOIN
+    // ================================
     $orders = $wpdb->get_results(
         $wpdb->prepare(
-            "SELECT DISTINCT p.ID as order_id, 
-                    p.post_date as order_date, 
-                    p.post_status as status, 
-                    meta_total.meta_value as total,
-                    meta_first_name.meta_value as first_name,
-                    meta_last_name.meta_value as last_name
-             FROM {$wpdb->prefix}posts p
-             LEFT JOIN {$wpdb->prefix}postmeta meta_total ON p.ID = meta_total.post_id AND meta_total.meta_key = '_order_total'
-             LEFT JOIN {$wpdb->prefix}postmeta meta_first_name ON p.ID = meta_first_name.post_id AND meta_first_name.meta_key = '_billing_first_name'
-             LEFT JOIN {$wpdb->prefix}postmeta meta_last_name ON p.ID = meta_last_name.post_id AND meta_last_name.meta_key = '_billing_last_name'
-             LEFT JOIN {$wpdb->prefix}postmeta meta_user_id ON p.ID = meta_user_id.post_id AND meta_user_id.meta_key = '_customer_user'
-             $product_join
-             WHERE p.post_type = 'shop_order'
-             AND meta_user_id.meta_value = %d
-             $query_condition_string
-             ORDER BY p.post_date DESC
-             LIMIT %d OFFSET %d",
+            "SELECT DISTINCT 
+                p.ID as order_id,
+                p.post_date as order_date,
+                p.post_status as status,
+                meta_total.meta_value as total,
+                meta_first_name.meta_value as first_name,
+                meta_last_name.meta_value as last_name,
+                
+                -- Fetch first product for this order
+                (
+                    SELECT pp.meta_value 
+                    FROM {$wpdb->prefix}woocommerce_order_items oi2
+                    JOIN {$wpdb->prefix}woocommerce_order_itemmeta pp 
+                        ON oi2.order_item_id = pp.order_item_id 
+                        AND pp.meta_key = '_product_id'
+                    WHERE oi2.order_id = p.ID
+                    LIMIT 1
+                ) AS product_id,
+
+                -- Get club_id from product
+                (
+                    SELECT pm.meta_value 
+                    FROM {$wpdb->prefix}postmeta pm
+                    WHERE pm.post_id = (
+                        SELECT pp2.meta_value 
+                        FROM {$wpdb->prefix}woocommerce_order_items oi3
+                        JOIN {$wpdb->prefix}woocommerce_order_itemmeta pp2 
+                            ON oi3.order_item_id = pp2.order_item_id 
+                            AND pp2.meta_key = '_product_id'
+                        WHERE oi3.order_id = p.ID
+                        LIMIT 1
+                    )
+                    AND pm.meta_key = '_select_club_id'
+                    LIMIT 1
+                ) AS club_id,
+
+                -- Get club currency safely
+                (
+                    SELECT c.club_currency 
+                    FROM {$wpdb->prefix}clubs c
+                    WHERE c.club_id = (
+                        SELECT pm.meta_value 
+                        FROM {$wpdb->prefix}postmeta pm
+                        WHERE pm.post_id = (
+                            SELECT pp3.meta_value 
+                            FROM {$wpdb->prefix}woocommerce_order_items oi4
+                            JOIN {$wpdb->prefix}woocommerce_order_itemmeta pp3 
+                                ON oi4.order_item_id = pp3.order_item_id 
+                                AND pp3.meta_key = '_product_id'
+                            WHERE oi4.order_id = p.ID
+                            LIMIT 1
+                        )
+                        AND pm.meta_key = '_select_club_id'
+                        LIMIT 1
+                    )
+                    LIMIT 1
+                ) AS club_currency
+
+            FROM {$wpdb->prefix}posts p
+            LEFT JOIN {$wpdb->prefix}postmeta meta_total 
+                ON p.ID = meta_total.post_id AND meta_total.meta_key = '_order_total'
+            LEFT JOIN {$wpdb->prefix}postmeta meta_first_name 
+                ON p.ID = meta_first_name.post_id AND meta_first_name.meta_key = '_billing_first_name'
+            LEFT JOIN {$wpdb->prefix}postmeta meta_last_name 
+                ON p.ID = meta_last_name.post_id AND meta_last_name.meta_key = '_billing_last_name'
+            LEFT JOIN {$wpdb->prefix}postmeta meta_user_id 
+                ON p.ID = meta_user_id.post_id AND meta_user_id.meta_key = '_customer_user'
+            $product_join
+            WHERE p.post_type = 'shop_order'
+            AND meta_user_id.meta_value = %d
+            $query_condition_string
+            ORDER BY p.post_date DESC
+            LIMIT %d OFFSET %d",
             $query_params
         )
     );
 
-    // Count query for total orders
+    // Count Query
     $total_orders = $wpdb->get_var(
         $wpdb->prepare(
             "SELECT COUNT(DISTINCT p.ID)
              FROM {$wpdb->prefix}posts p
-             LEFT JOIN {$wpdb->prefix}postmeta meta_user_id ON p.ID = meta_user_id.post_id AND meta_user_id.meta_key = '_customer_user'
+             LEFT JOIN {$wpdb->prefix}postmeta meta_user_id 
+                ON p.ID = meta_user_id.post_id AND meta_user_id.meta_key = '_customer_user'
              $product_join
              WHERE p.post_type = 'shop_order'
              AND meta_user_id.meta_value = %d
@@ -117,6 +184,7 @@ function get_user_orders($user_id, $filters = [], $pagination = []) {
 
     return ['orders' => $orders, 'total' => $total_orders];
 }
+
 
 
 
@@ -225,7 +293,8 @@ function render_user_orders($user_orders, $orders, $filter_status, $filter_month
                 $customer_name = $order->first_name . ' ' . $order->last_name;
                 $order_date = date('d/m/Y', strtotime($order->order_date));
                 $order_status = ucwords(str_replace('wc-', '', $order->status));
-                $order_total = wc_price($order->total);
+                $currency = $order->club_currency ?: 'R'; 
+$order_total = $currency . number_format((float) $order->total, 2);
                 ?>
                 <tr>
                     

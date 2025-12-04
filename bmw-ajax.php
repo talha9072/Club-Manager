@@ -843,15 +843,22 @@ add_action('wp_ajax_nopriv_my_event_csv', 'my_event_csv_ajax');
 
 
 
+
+
+
+/* ==========================================================================
+   GLOBAL PRODUCT LOOP — SAFE CURRENCY REPLACER (NO LOOPS, NO OBSERVER)
+=========================================================================== */
 add_action('wp_head', function () {
 
     if (is_admin()) return;
 
+    // STOP this script on cart + checkout + thank you
+    if (is_cart() || is_checkout() || is_order_received_page()) return;
+
     global $wpdb;
 
-    /******************************************
-     * STEP 1: Build Product → Currency Map
-     ******************************************/
+    // Build product → currency map
     $rows = $wpdb->get_results("
         SELECT 
             p.ID as product_id,
@@ -868,94 +875,235 @@ add_action('wp_head', function () {
     foreach ($rows as $r) {
         $map[(int)$r->product_id] = $r->club_currency ?: 'R';
     }
+?>
+<script>
+window.productCurrencyMap = <?php echo json_encode($map); ?>;
 
-    ?>
-    <script>
-    /******************************************
-     * JS MAP + PRICE UPDATER
-     ******************************************/
-    window.productCurrencyMap = <?php echo json_encode($map); ?>;
-    console.log("🟢 MAP READY:", window.productCurrencyMap);
+document.addEventListener("DOMContentLoaded", function () {
 
-    document.addEventListener("DOMContentLoaded", function () {
+    const map = window.productCurrencyMap || {};
 
-        console.log("⚡ GLOBAL INIT");
+    function updateProductLoopPrices() {
 
-        const map = window.productCurrencyMap || {};
+        const items = document.querySelectorAll("li.product");
 
-        function updatePrices() {
-            const items = document.querySelectorAll("li.product");
+        items.forEach(li => {
 
-            console.log("📦 Found products:", items.length);
+            if (li.dataset.currencyUpdated === "1") return;
 
-            items.forEach(li => {
+            const idClass = [...li.classList].find(c => c.startsWith("post-"));
+            if (!idClass) return;
 
-                if (li.dataset.currencyUpdated === "1") return;
+            const pid = idClass.replace("post-", "");
+            const currency = map[pid];
+            if (!currency) return;
 
-                const idClass = [...li.classList].find(c => c.startsWith("post-"));
-                if (!idClass) return;
+            const priceContainers = li.querySelectorAll(".price, .amount, bdi, .woocommerce-Price-currencySymbol");
 
-                const pid = idClass.replace("post-", "");
-                const currency = map[pid];
+            priceContainers.forEach(el => {
+                let html = el.innerHTML;
 
-                if (!currency) return;
+                html = html.replace(/<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
+                    `<span class="woocommerce-Price-currencySymbol">${currency}</span>`);
 
-                // Try all possible Woocommerce / Divi price wrappers
-                let priceContainers = li.querySelectorAll(".price, .amount, bdi, span");
+                html = html.replace(/R(?=\d)/g, currency);
 
-                priceContainers.forEach(el => {
-                    let html = el.innerHTML;
-
-                    // Replace standalone R before digits
-                    html = html.replace(/R(?=\d)/g, currency);
-
-                    // Replace <span>R</span>
-                    html = html.replace(/<span[^>]*>R<\/span>/g, `<span>${currency}</span>`);
-
-                    // Replace inside <bdi>
-                    html = html.replace(/<bdi>R/g, `<bdi>${currency}`);
-
-                    el.innerHTML = html;
-                });
-
-                li.dataset.currencyUpdated = "1";
-
-                console.log(`🔄 Updated product ${pid} → ${currency}`);
+                el.innerHTML = html;
             });
-        }
 
-        updatePrices();
+            li.dataset.currencyUpdated = "1";
+        });
+    }
 
-        const observer = new MutationObserver(() => updatePrices());
-        observer.observe(document.body, { childList: true, subtree: true });
+    // INITIAL
+    updateProductLoopPrices();
 
-        console.log("👀 Observer Active");
+    // SAFE WooCommerce event triggers (NO infinite loops)
+    [
+        "updated_wc_div",
+        "wc_fragment_refresh",
+        "updated_cart_totals",
+        "updated_checkout",
+        "wc_cart_button_updated"
+    ].forEach(ev => {
+        document.body.addEventListener(ev, updateProductLoopPrices);
     });
-    </script>
-    <?php
+
+});
+</script>
+<?php
 });
 
 
-/**********************************************
- * SINGLE PRODUCT PAGE – REPLACE CURRENCY
- **********************************************/
+/* ==========================================================================
+   SINGLE PRODUCT PAGE — SAFE VERSION
+=========================================================================== */
 add_action('wp_head', function () {
 
     if (!is_product() || is_admin()) return;
 
     global $post, $wpdb;
 
-    // Product ID
     $product_id = $post->ID;
-
-    // Fetch club_id
     $club_id = get_post_meta($product_id, '_select_club_id', true);
-
     if (empty($club_id)) return;
 
-    // Fetch club currency
     $club_currency = $wpdb->get_var(
         $wpdb->prepare("SELECT IFNULL(club_currency, 'R') FROM wp_clubs WHERE club_id = %d", $club_id)
+    );
+
+    if (!$club_currency) $club_currency = "R";
+?>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const currency = "<?php echo esc_js($club_currency); ?>";
+
+    function updateSingleProductCurrency() {
+        const priceElements = document.querySelectorAll(".price, .woocommerce-Price-currencySymbol, bdi");
+
+        priceElements.forEach(el => {
+            let html = el.innerHTML;
+
+            html = html.replace(/<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
+                                `<span class="woocommerce-Price-currencySymbol">${currency}</span>`);
+
+            html = html.replace(/R(?=\d)/g, currency);
+
+            el.innerHTML = html;
+        });
+    }
+
+    updateSingleProductCurrency();
+
+    // If single product has variation change events
+    document.body.addEventListener("woocommerce_variation_has_changed", updateSingleProductCurrency);
+    document.body.addEventListener("show_variation", updateSingleProductCurrency);
+
+});
+</script>
+<?php
+});
+
+
+
+/* ============================================================================
+   CART + CHECKOUT + THANK YOU PAGE — CLUB CURRENCY REPLACER (NO OBSERVER)
+============================================================================ */
+add_action('wp_head', function () {
+
+    if (is_admin()) return;
+
+    // Run on cart, checkout, and order received page
+    if (!is_cart() && !is_checkout() && !is_order_received_page()) return;
+
+    global $woocommerce, $wpdb;
+
+    // Get cart items
+    $items = $woocommerce->cart->get_cart();
+
+    // If on thank-you page, cart will be empty → load order items
+    if (empty($items) && is_order_received_page()) {
+
+        $order_id = absint(get_query_var('order-received'));
+        if ($order_id) {
+            $order = wc_get_order($order_id);
+            if ($order) {
+                $items = $order->get_items();
+            }
+        }
+    }
+
+    if (empty($items)) return;
+
+    // First product
+    $first_item = reset($items);
+    $product_id = is_object($first_item)
+        ? $first_item->get_product_id()
+        : $first_item['product_id'];
+
+    $club_id = get_post_meta($product_id, '_select_club_id', true);
+    if (empty($club_id)) return;
+
+    $club_currency = $wpdb->get_var(
+        $wpdb->prepare("SELECT IFNULL(club_currency, 'R')
+                        FROM wp_clubs WHERE club_id = %d", $club_id)
+    );
+
+    if (!$club_currency) $club_currency = "R";
+?>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const currency = "<?php echo esc_js($club_currency); ?>";
+    console.log("💰 Currency Loaded:", currency);
+
+    function updateCurrency() {
+        const elems = document.querySelectorAll(
+            ".woocommerce-Price-amount, .woocommerce-Price-currencySymbol, bdi, .order-total, .cart_totals, .woocommerce-order"
+        );
+
+        elems.forEach(el => {
+            let html = el.innerHTML;
+
+            html = html.replace(
+                /<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
+                `<span class="woocommerce-Price-currencySymbol">${currency}</span>`
+            );
+
+            html = html.replace(/R(?=\d)/g, currency);
+            el.innerHTML = html;
+        });
+    }
+
+    // First run
+    updateCurrency();
+
+    // WooCommerce checkout update events (NO OBSERVER)
+    [
+        "updated_checkout",
+        "update_checkout",
+        "updated_cart_totals",
+        "updated_wc_div",
+        "payment_method_selected"
+    ].forEach(eventName => {
+        jQuery(document.body).on(eventName, function () {
+            updateCurrency();
+        });
+    });
+
+});
+</script>
+<?php
+});
+
+
+
+
+/* ============================================================================
+   SINGLE AJDE EVENT — CLUB-BASED WOO CURRENCY REPLACER
+============================================================================ */
+add_action('wp_head', function () {
+
+    if (is_admin()) return;
+
+    global $post, $wpdb;
+
+    // Run only on single AJDE Event pages
+    if (!$post || $post->post_type !== 'ajde_events') {
+        return;
+    }
+
+    // Get club ID from event meta
+    $club_id = get_post_meta($post->ID, '_select_club_id', true);
+    if (empty($club_id)) return;
+
+    // Get club currency from DB
+    $club_currency = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT IFNULL(club_currency, 'R') FROM wp_clubs WHERE club_id = %d",
+            $club_id
+        )
     );
 
     if (empty($club_currency)) $club_currency = "R"; // fallback
@@ -963,35 +1111,49 @@ add_action('wp_head', function () {
 <script>
 document.addEventListener("DOMContentLoaded", function () {
 
-    console.log("📌 SINGLE PRODUCT PAGE INIT");
+    const currency = "<?php echo esc_js($club_currency); ?>";
+    console.log("🎟 AJDE Event → Club Currency:", currency);
 
-    let currency = "<?php echo esc_js($club_currency); ?>";
+    /**
+     * Replace WooCommerce currency symbols on the page
+     */
+    function replaceAjdeEventCurrency() {
 
-    console.log("💰 Club Currency:", currency);
+        // Find WooCommerce prices (only if present)
+        const elements = document.querySelectorAll(
+            ".woocommerce-Price-currencySymbol, .woocommerce-Price-amount, bdi, .price"
+        );
 
-    // Replace currency symbol inside single product price
-    const priceElements = document.querySelectorAll(".price, .woocommerce-Price-currencySymbol, bdi, span");
+        if (!elements.length) {
+            console.log("ℹ️ No WooCommerce prices found on this AJDE event.");
+            return;
+        }
 
-    priceElements.forEach(el => {
-        let html = el.innerHTML;
+        elements.forEach(el => {
+            let html = el.innerHTML;
 
-        // Replace the WooCommerce currency symbol
-        html = html.replace(/<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
-                            `<span class="woocommerce-Price-currencySymbol">${currency}</span>`);
+            // Replace Woo symbol span
+            html = html.replace(
+                /<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
+                `<span class="woocommerce-Price-currencySymbol">${currency}</span>`
+            );
 
-        // Replace raw R before numbers
-        html = html.replace(/R(?=\d)/g, currency);
+            // Replace raw "R" before digits
+            html = html.replace(/R(?=\d)/g, currency);
 
-        el.innerHTML = html;
-    });
+            el.innerHTML = html;
+        });
 
-    console.log("✅ Single Product Price Updated →", currency);
+        console.log("💱 Currency replaced on AJDE event page →", currency);
+    }
+
+    // Run once on load
+    replaceAjdeEventCurrency();
+
 });
 </script>
 <?php
 });
-
-
 
 
 
