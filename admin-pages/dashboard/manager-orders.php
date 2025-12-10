@@ -244,9 +244,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action']) && !em
                 $order_date = $order->get_date_created() ? $order->get_date_created()->date('d/m/Y') : '';
                 $order_status = ucfirst($order->get_status());
     
-                // Format the Order Total
-                $order_total_raw = $order->get_total(); // Get raw total
-                $order_total = 'R' . intval($order_total_raw); // Convert to integer and prefix with 'R'
+                // 1) Find first product ID inside this order
+                $product_id = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT meta_value 
+                        FROM {$wpdb->prefix}woocommerce_order_itemmeta oim
+                        INNER JOIN {$wpdb->prefix}woocommerce_order_items oi
+                            ON oi.order_item_id = oim.order_item_id
+                        WHERE oi.order_id = %d
+                        AND oim.meta_key = '_product_id'
+                        LIMIT 1",
+                        $order_id
+                    )
+                );
+
+                // 2) Find club currency from product
+                $club_currency = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT c.club_currency
+                        FROM {$wpdb->prefix}postmeta pm
+                        LEFT JOIN {$wpdb->prefix}clubs c 
+                            ON c.club_id = pm.meta_value
+                        WHERE pm.post_id = %d
+                        AND pm.meta_key = '_select_club_id'
+                        LIMIT 1",
+                        $product_id
+                    )
+                );
+
+                // 3) Fallback if empty
+                if (!$club_currency) {
+                    $club_currency = 'R';
+                }
+
+                // 4) Final amount for CSV
+                $order_total_raw = $order->get_total();
+                $order_total = $club_currency . number_format((float)$order_total_raw, 2);
     
                 // Billing and shipping addresses
                 $billing_address = strip_tags($order->get_formatted_billing_address());
@@ -554,7 +587,37 @@ Advanced
                     $order_date = date('d/m/Y', strtotime($order->order_date));
                     $order_status_raw = $order->status; // Raw status for logic
                     $order_status = ucwords(str_replace('wc-', '', $order_status_raw)); // Cleaned status for display
-                    $order_total = wc_price($order->total);
+                    // Fetch first product ID inside this order
+                    $product_id = $wpdb->get_var(
+                        $wpdb->prepare(
+                            "SELECT meta_value 
+                            FROM {$wpdb->prefix}woocommerce_order_itemmeta oim
+                            INNER JOIN {$wpdb->prefix}woocommerce_order_items oi
+                                ON oi.order_item_id = oim.order_item_id
+                            WHERE oi.order_id = %d
+                            AND meta_key = '_product_id'
+                            LIMIT 1",
+                            $order_number
+                        )
+                    );
+
+                    // Fetch club currency for that product
+                    $club_currency = $wpdb->get_var(
+                        $wpdb->prepare(
+                            "SELECT c.club_currency
+                            FROM {$wpdb->prefix}postmeta pm
+                            LEFT JOIN {$wpdb->prefix}clubs c ON c.club_id = pm.meta_value
+                            WHERE pm.post_id = %d
+                            AND pm.meta_key = '_select_club_id'
+                            LIMIT 1",
+                            $product_id
+                        )
+                    );
+
+                    if (!$club_currency) {
+                        $club_currency = 'R'; // fallback
+                    }
+                    $order_total = $club_currency . number_format((float)$order->total, 2);
 
                     // Badge styles for different order statuses
                     $badge_styles = [
