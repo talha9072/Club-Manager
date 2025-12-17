@@ -276,6 +276,18 @@ function display_club_products() {
 
     $club_name = $club_info->club_name;
     $products = get_products_by_club($club_name);
+    // Get the club currency
+    global $wpdb;
+    $club_currency = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT club_currency FROM {$wpdb->prefix}clubs WHERE club_id = %d LIMIT 1",
+            $club_info->club_id
+        )
+    );
+
+if (!$club_currency) {
+    $club_currency = 'R';
+}
 
     // Fetch all product categories
     $categories = get_terms([
@@ -404,7 +416,8 @@ function display_club_products() {
 
                 if ($product && $product->post_type === 'product') {
                     // Fetch product details
-                    $price = sanitize_text_field(get_post_meta($product_id, '_price', true));
+                    $price_raw = sanitize_text_field(get_post_meta($product_id, '_price', true));
+                    $price = $club_currency . number_format((float)$price_raw, 2, ',', ' ');
                     $sku = sanitize_text_field(get_post_meta($product_id, '_sku', true));
                     $stock_status = sanitize_text_field(get_post_meta($product_id, '_stock_status', true));
 
@@ -524,76 +537,95 @@ function display_club_products() {
             foreach ($products as $product) {
                 $product_id = $product->ID;
                 $categories = get_product_categories($product_id);
-                $price = get_post_meta($product_id, '_price', true);
-                $subscription_price = get_post_meta($product_id, '_subscription_price', true);
-                $subscription_period = get_post_meta($product_id, '_subscription_period', true);
+
+                // Base metadata
+                $subscription_price   = get_post_meta($product_id, '_subscription_price', true);
+                $subscription_period  = get_post_meta($product_id, '_subscription_period', true);
                 $subscription_interval = get_post_meta($product_id, '_subscription_period_interval', true);
 
-                        // Determine price to display
-                $product_type = get_product_type($product_id); // Get product type
+                $product_type = get_product_type($product_id); // simple / subscription / variable
+
+                // ======================
+                // PRICE BUILDING SECTION
+                // ======================
+
                 if ($product_type === 'variable') {
-                    // Fetch price range for variable products
+
+                    // VARIABLE PRODUCT PRICE RANGE
                     $display_price = get_variable_product_price_range($product_id);
+
+                    // Replace R with club currency inside variable product range
+                    if (!empty($display_price)) {
+                        $display_price = str_replace('R', $club_currency, $display_price);
+                    }
+
                 } else {
-                    // Regular price logic for simple/subscription products
-                    $regular_price = get_post_meta($product_id, '_regular_price', true);
-                    $sale_price = get_post_meta($product_id, '_sale_price', true);
-                    $subscription_price = get_post_meta($product_id, '_subscription_price', true);
-                    $subscription_interval = get_post_meta($product_id, '_subscription_period_interval', true);
-                    $subscription_period = get_post_meta($product_id, '_subscription_period', true);
-                    $sign_up_fee = get_post_meta($product_id, '_subscription_sign_up_fee', true);
+
+                    // SIMPLE / SUBSCRIPTION PRODUCT PRICE LOGIC
+                    $regular_price      = get_post_meta($product_id, '_regular_price', true);
+                    $sale_price         = get_post_meta($product_id, '_sale_price', true);
+                    $sign_up_fee        = get_post_meta($product_id, '_subscription_sign_up_fee', true);
 
                     if (!empty($subscription_price)) {
-                        // Subscription product price
-                        $display_price = 'R' . number_format((float)$subscription_price, 2, ',', ' ') 
+
+                        // SUBSCRIPTION PRICE
+                        $display_price = $club_currency . number_format((float)$subscription_price, 2, ',', ' ')
                                     . ' for ' . $subscription_interval . ' ' . $subscription_period;
+
                         if (!empty($sign_up_fee)) {
-                            $display_price .= ' and a R' . number_format((float)$sign_up_fee, 2, ',', ' ') . ' sign-up fee';
+                            $display_price .= ' and a ' . $club_currency . number_format((float)$sign_up_fee, 2, ',', ' ') . ' sign-up fee';
                         }
-                    } else if (!empty($sale_price)) {
-                        // Simple product sale price
-                        $display_price = 'R' . number_format((float)$sale_price, 2, ',', ' ');
-                    } else if (!empty($regular_price)) {
-                        // Simple product regular price
-                        $display_price = 'R' . number_format((float)$regular_price, 2, ',', ' ');
+
+                    } elseif (!empty($sale_price)) {
+
+                        // SALE PRICE
+                        $display_price = $club_currency . number_format((float)$sale_price, 2, ',', ' ');
+
+                    } elseif (!empty($regular_price)) {
+
+                        // REGULAR PRICE
+                        $display_price = $club_currency . number_format((float)$regular_price, 2, ',', ' ');
+
                     } else {
-                        // If no price is found, use `_price` if available
+
+                        // FALLBACK PRICE
                         $fallback_price = get_post_meta($product_id, '_price', true);
+
                         if (!empty($fallback_price)) {
-                            $display_price = 'R' . number_format((float)$fallback_price, 2, ',', ' ');
+                            $display_price = $club_currency . number_format((float)$fallback_price, 2, ',', ' ');
                         } else {
-                            // If `_price` is also empty, show "Price not available"
-                            $display_price = 'R0,00';
+                            // Show 0
+                            $display_price = $club_currency . '0,00';
                         }
                     }
                 }
 
-                        
-
-                
-
+                // ======================
+                // STOCK INFORMATION
+                // ======================
                 $sku = get_post_meta($product_id, '_sku', true);
                 $stock_status = get_post_meta($product_id, '_stock_status', true);
-                $stock_quantity = get_post_meta($product_id, '_stock', true); // Fetch stock quantity
+                $stock_quantity = get_post_meta($product_id, '_stock', true);
 
-                // Determine stock display with count if available
                 if ($stock_status === 'instock') {
                     $stock_text = "In Stock";
                     $stock_count = (!empty($stock_quantity) && is_numeric($stock_quantity)) ? " ($stock_quantity)" : "";
-                    $stock_color = "style='color: green; font-weight: bold;'"; // Green color for in stock
+                    $stock_color = "style='color: green; font-weight: bold;'";
                 } elseif ($stock_status === 'outofstock') {
                     $stock_text = "Out Of Stock";
-                    $stock_color = "style='color: red; font-weight: bold;'"; // Red color for out of stock
+                    $stock_color = "style='color: red; font-weight: bold;'";
                     $stock_count = "";
                 } else {
                     $stock_text = "Unknown";
-                    $stock_color = ""; // No color for unknown status
+                    $stock_color = "";
                     $stock_count = "";
                 }
 
-                // Final stock status display
                 $display_stock_status = "<span $stock_color>$stock_text$stock_count</span>";
 
+                // ======================
+                // OUTPUT ROW
+                // ======================
 
                 echo '<tr>';
                 echo '<td><input type="checkbox" name="product_ids[]" value="' . intval($product_id) . '"></td>';
@@ -601,12 +633,11 @@ function display_club_products() {
                 echo '<td data-label="Categories">' . esc_html($categories) . '</td>';
                 echo '<td data-label="Price">' . esc_html($display_price) . '</td>';
                 echo '<td data-label="SKU">' . esc_html($sku) . '</td>';
-                $product_type = get_product_type($product_id); // Get product type
                 echo '<td data-label="Stock Status">' . $display_stock_status . '</td>';
-                echo '<td data-label="Product Type">' . esc_html(ucwords(str_replace('-', ' ', $product_type))) . '</td>'; 
-
+                echo '<td data-label="Product Type">' . esc_html(ucwords(str_replace('-', ' ', $product_type))) . '</td>';
                 echo '</tr>';
             }
+
             echo '</tbody>';
             echo '</table>';
             if ($total_pages >= 1) {

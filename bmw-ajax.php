@@ -1158,4 +1158,63 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
 
+/**
+ * Hide PayFast gateway if the product's club is missing PayFast settings.
+ */
+add_filter('woocommerce_available_payment_gateways', function($gateways) {
+    if (!is_checkout()) {
+        return $gateways;
+    }
+
+    // Detect club ID from cart
+    $club_id = null;
+
+    foreach (WC()->cart->get_cart() as $cart_item) {
+        $product_id = $cart_item['product_id'];
+        $club_id = get_post_meta($product_id, '_select_club_id', true);
+
+        if (!empty($club_id)) {
+            break; // Found club, no need to keep checking
+        }
+    }
+
+    // If no club ID → global product → allow PayFast
+    if (empty($club_id) || strtolower(trim($club_id)) === 'global') {
+        return $gateways; // Show PayFast
+    }
+
+    // Check PayFast club settings
+    global $wpdb;
+    $club_id = intval($club_id); // sanitise
+    $row = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM {$wpdb->prefix}clubs WHERE club_id = %d",
+        $club_id
+    ));
+
+    $club_has_settings = false;
+
+    if ($row) {
+        // LIVE settings OK?
+        if (!empty($row->payfast_merchant_id) && !empty($row->payfast_merchant_key)) {
+            $club_has_settings = true;
+        }
+
+        // Sandbox settings OK?
+        if ($row->sandbox_enabled == 1 &&
+            !empty($row->sandbox_merchant_id) &&
+            !empty($row->sandbox_merchant_key)) {
+            $club_has_settings = true;
+        }
+    }
+
+    // If club exists but no settings → hide PayFast
+    if (!$club_has_settings) {
+        unset($gateways['payfast']);
+    }
+
+    return $gateways;
+});
+
+
+
 ?>
