@@ -240,7 +240,7 @@ function render_logged_in_user_membership_table($memberships) {
                     <td style="padding: 10px;" data-label="Action">
     <?php
         // Get status clearly and normalize
-        $allowed_statuses = ['active', 'expired', 'cancelled'];
+        $allowed_statuses = ['active', 'on hold'];
         $current_status = strtolower(trim($membership['subscription_status'] ?? ''));
 
         if (in_array($current_status, $allowed_statuses, true)): 
