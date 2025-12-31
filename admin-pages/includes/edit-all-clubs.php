@@ -19,6 +19,10 @@ $club = $wpdb->get_row($wpdb->prepare(
     $club_id
 ));
 
+$payfast_enabled = isset($club->payfast_enabled) ? (int) $club->payfast_enabled : 0;
+$stripe_enabled  = isset($club->stripe_enabled) ? (int) $club->stripe_enabled : 0;
+$yoco_enabled    = isset($club->yoco_enabled) ? (int) $club->yoco_enabled : 0;
+
 // Set default values for club name, URL, and logo
 $club_name = $club ? esc_attr($club->club_name) : '';
 $club_url = $club ? esc_attr($club->club_url) : '/';
@@ -363,9 +367,13 @@ if (isset($_GET['rides_forms_updated']) && $_GET['rides_forms_updated'] == '1') 
 }
 
 
-// payfast
+// PayFast
 // Handle PayFast form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_payfast_settings'])) {
+
+    // Enable / Disable PayFast
+    $payfast_enabled = isset($_POST['payfast_enabled']) ? 1 : 0;
+
     $payfast_fields = [
         'payfast_merchant_id'   => sanitize_text_field($_POST['payfast_merchant_id']),
         'payfast_merchant_key'  => sanitize_text_field($_POST['payfast_merchant_key']),
@@ -374,21 +382,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_payfast_settings
         'sandbox_merchant_key'  => sanitize_text_field($_POST['sandbox_merchant_key']),
         'sandbox_passphrase'    => sanitize_text_field($_POST['sandbox_passphrase']),
         'sandbox_enabled'       => isset($_POST['sandbox_enabled']) ? 1 : 0,
+        'payfast_enabled'       => $payfast_enabled,
     ];
 
     $update_result = $wpdb->update(
         "{$wpdb->prefix}clubs",
         $payfast_fields,
         ['club_id' => $club_id],
-        ['%s','%s','%s','%s','%s','%s','%d'],
+        // 🔴 FORMAT ARRAY MUST MATCH FIELD COUNT EXACTLY
+        ['%s','%s','%s','%s','%s','%s','%d','%d'],
         ['%d']
     );
 
     if ($update_result !== false) {
-        wp_redirect(add_query_arg(['club_id' => $club_id, 'payfast_updated' => '1'], $_SERVER['REQUEST_URI']));
+        wp_redirect(
+            add_query_arg(
+                ['club_id' => $club_id, 'payfast_updated' => '1'],
+                $_SERVER['REQUEST_URI']
+            )
+        );
         exit;
     } else {
-        echo '<div class="notice notice-error is-dismissible"><p>' . __('Failed to update PayFast settings.', 'club-manager') . '</p></div>';
+        echo '<div class="notice notice-error is-dismissible">
+                <p>' . __('Failed to update PayFast settings.', 'club-manager') . '</p>
+              </div>';
     }
 }
 
@@ -400,6 +417,10 @@ if (isset($_GET['payfast_updated']) && $_GET['payfast_updated'] == '1') {
 
 // Stripe
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_stripe_settings'])) {
+
+    // Enable / Disable Stripe
+    $stripe_enabled = isset($_POST['stripe_enabled']) ? 1 : 0;
+
     $stripe_fields = [
         'stripe_live_publishable_key'   => sanitize_text_field($_POST['stripe_live_publishable_key']),
         'stripe_live_secret_key'        => sanitize_text_field($_POST['stripe_live_secret_key']),
@@ -408,21 +429,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_stripe_settings'
         'stripe_test_secret_key'        => sanitize_text_field($_POST['stripe_test_secret_key']),
         'stripe_test_webhook_secret'    => sanitize_text_field($_POST['stripe_test_webhook_secret']),
         'stripe_testmode_enabled'       => isset($_POST['stripe_testmode_enabled']) ? 1 : 0,
+        'stripe_enabled'                => $stripe_enabled,
     ];
 
     $update_result = $wpdb->update(
         "{$wpdb->prefix}clubs",
         $stripe_fields,
         ['club_id' => $club_id],
-        ['%s','%s','%s','%s','%s','%s','%d'],
+        // 🔴 format array MUST match fields exactly
+        ['%s','%s','%s','%s','%s','%s','%d','%d'],
         ['%d']
     );
 
     if ($update_result !== false) {
-        wp_redirect(add_query_arg(['club_id' => $club_id, 'stripe_updated' => '1'], $_SERVER['REQUEST_URI']));
+        wp_redirect(
+            add_query_arg(
+                ['club_id' => $club_id, 'stripe_updated' => '1'],
+                $_SERVER['REQUEST_URI']
+            )
+        );
         exit;
     } else {
-        echo '<div class="notice notice-error is-dismissible"><p>' . __('Failed to update Stripe settings.', 'club-manager'); '</p></div>';
+        echo '<div class="notice notice-error is-dismissible">
+                <p>' . __('Failed to update Stripe settings.', 'club-manager') . '</p>
+              </div>';
     }
 }
 
@@ -431,30 +461,43 @@ if (isset($_GET['stripe_updated']) && $_GET['stripe_updated'] == '1') {
 }
 
 
-// yoco payment gateway
-// Yoco
+// Yoco Payment Gateway
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_yoco_settings'])) {
+
+    // Enable / Disable Yoco Gateway
+    $yoco_enabled = isset($_POST['yoco_enabled']) ? 1 : 0;
+
     $yoco_fields = [
         'yoco_live_secret_key'     => sanitize_text_field($_POST['yoco_live_secret_key']),
         'yoco_test_secret_key'     => sanitize_text_field($_POST['yoco_test_secret_key']),
         'yoco_test_mode_enabled'   => isset($_POST['yoco_test_mode_enabled']) ? 1 : 0,
+        'yoco_enabled'             => $yoco_enabled,
     ];
 
     $update_result = $wpdb->update(
         "{$wpdb->prefix}clubs",
         $yoco_fields,
         ['club_id' => $club_id],
-        ['%s','%s','%d'],
+        // 🔴 format array MUST match field count
+        ['%s','%s','%d','%d'],
         ['%d']
     );
 
     if ($update_result !== false) {
-        wp_redirect(add_query_arg(['club_id' => $club_id, 'yoco_updated' => '1'], $_SERVER['REQUEST_URI']));
+        wp_redirect(
+            add_query_arg(
+                ['club_id' => $club_id, 'yoco_updated' => '1'],
+                $_SERVER['REQUEST_URI']
+            )
+        );
         exit;
     } else {
-        echo '<div class="notice notice-error is-dismissible"><p>' . __('Failed to update Yoco settings.', 'club-manager') . '</p></div>';
+        echo '<div class="notice notice-error is-dismissible">
+                <p>' . __('Failed to update Yoco settings.', 'club-manager') . '</p>
+              </div>';
     }
 }
+
 
 if (isset($_GET['yoco_updated']) && $_GET['yoco_updated'] == '1') {
     echo '<div class="notice notice-success is-dismissible"><p>' . __('Yoco settings updated successfully.', 'club-manager') . '</p></div>';
@@ -635,6 +678,16 @@ if (!empty($_POST)) {
         <form method="post">
             <table class="form-table">
                 <tr>
+                <th><?php _e('Enable PayFast', 'club-manager'); ?></th>
+                <td>
+                    <label>
+                        <input type="checkbox" name="payfast_enabled" value="1"
+                            <?php checked($payfast_enabled, 1); ?>>
+                        <?php _e('Enable PayFast for this club', 'club-manager'); ?>
+                    </label>
+                </td>
+            </tr>
+                <tr>
                     <th><label for="payfast_merchant_id"><?php _e('Live Merchant ID', 'club-manager'); ?></label></th>
                     <td><input type="text" name="payfast_merchant_id" id="payfast_merchant_id" value="<?php echo esc_attr($club->payfast_merchant_id ?? ''); ?>" class="regular-text"></td>
                 </tr>
@@ -675,6 +728,16 @@ if (!empty($_POST)) {
 <div class="sub-tab-content" id="stripe-gateway" style="display: none;">
     <form method="post">
         <table class="form-table">
+            <tr>
+                <th><?php _e('Enable Stripe', 'club-manager'); ?></th>
+                <td>
+                    <label>
+                        <input type="checkbox" name="stripe_enabled" value="1"
+                            <?php checked($stripe_enabled, 1); ?>>
+                        <?php _e('Enable Stripe for this club', 'club-manager'); ?>
+                    </label>
+                </td>
+            </tr>
             <tr>
                 <th><label for="stripe_live_publishable_key"><?php _e('Live Publishable Key', 'club-manager'); ?></label></th>
                 <td><input type="text" name="stripe_live_publishable_key" id="stripe_live_publishable_key" value="<?php echo esc_attr($club->stripe_live_publishable_key ?? ''); ?>" class="regular-text"></td>
@@ -717,6 +780,16 @@ if (!empty($_POST)) {
 <div class="sub-tab-content" id="yocomain-gateway" style="display: none;">
     <form method="post">
         <table class="form-table">
+            <tr>
+                <th><?php _e('Enable Yoco Gateway', 'club-manager'); ?></th>
+                <td>
+                    <label>
+                        <input type="checkbox" name="yoco_enabled" value="1"
+                            <?php checked($yoco_enabled, 1); ?>>
+                        <?php _e('Enable Yoco Gateway for this club', 'club-manager'); ?>
+                    </label>
+                </td>
+            </tr>
             <tr>
                 <th><label for="yoco_live_secret_key"><?php _e('Live Secret Key', 'club-manager'); ?></label></th>
                 <td><input type="text" name="yoco_live_secret_key" id="yoco_live_secret_key" value="<?php echo esc_attr($club->yoco_live_secret_key ?? ''); ?>" class="regular-text"></td>
