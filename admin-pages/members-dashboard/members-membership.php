@@ -258,46 +258,69 @@ function render_logged_in_user_membership_table($memberships) {
             <?php endforeach; ?>
         </tbody>
     </table>
-    <script>
+    <?php
+// 🔒 Generate nonce ONCE (stable)
+$renew_nonce = wp_create_nonce('renew_subscription_nonce');
+?>
+
+<script>
 jQuery(document).ready(function ($) {
-    $('.renew-subscription-btn').on('click', function () {
-        const subscriptionId = $(this).data('subscription-id');
-        const nonce = '<?php echo wp_create_nonce('renew_subscription_nonce'); ?>';
+
+    $('.renew-subscription-btn').on('click', function (e) {
+        e.preventDefault();
+
+        const $btn = $(this);
+        const subscriptionId = $btn.data('subscription-id');
+        const nonce = '<?php echo esc_js($renew_nonce); ?>';
+
+        // Safety check
+        if (!subscriptionId) {
+            alert('Invalid subscription ID.');
+            return;
+        }
 
         // Confirm renewal
         if (!confirm('Are you sure you want to renew this subscription?')) {
             return;
         }
 
-        // Disable button to prevent multiple clicks
-        $(this).prop('disabled', true).text('Renewing...');
+        // Disable only THIS button (not all)
+        $btn.prop('disabled', true).text('Renewing...');
 
         $.ajax({
             type: 'POST',
-            url: '<?php echo admin_url('admin-ajax.php'); ?>',
+            url: '<?php echo esc_url(admin_url('admin-ajax.php')); ?>',
+            dataType: 'json',
             data: {
                 action: 'renew_subscription_unique',
                 subscription_id: subscriptionId,
                 _ajax_nonce: nonce
             },
+
             beforeSend: function () {
-                console.log('Renewing subscription ID: ' + subscriptionId);
+                console.log('[Renew] Subscription ID:', subscriptionId);
             },
+
             success: function (response) {
+                console.log('[Renew] Response:', response);
+
                 if (response.success) {
                     alert('Subscription renewed successfully!');
                     location.reload();
                 } else {
-                    alert('Renewal failed: ' + response.data.message);
-                    $('.renew-subscription-btn').prop('disabled', false).text('Renew');
+                    alert('Renewal failed: ' + (response.data?.message || 'Unknown error'));
+                    $btn.prop('disabled', false).text('Renew');
                 }
             },
-            error: function () {
+
+            error: function (xhr) {
+                console.error('[Renew] AJAX failed:', xhr.responseText);
                 alert('AJAX request failed.');
-                $('.renew-subscription-btn').prop('disabled', false).text('Renew');
+                $btn.prop('disabled', false).text('Renew');
             }
         });
     });
+
 });
 </script>
 
