@@ -533,7 +533,6 @@ function handle_subscription_renewal() {
 
 
 
-
 // Register the AJAX handler
 add_action('wp_ajax_renew_subscription_unique', 'handle_subscription_renewal_unique');
 add_action('wp_ajax_nopriv_renew_subscription_unique', 'handle_subscription_renewal_unique');
@@ -542,7 +541,7 @@ function handle_subscription_renewal_unique() {
     global $wpdb;
 
     /* =========================
-     * SECURITY CHECKS
+     * SECURITY
      * ========================= */
     if (
         !isset($_POST['_ajax_nonce']) ||
@@ -551,7 +550,8 @@ function handle_subscription_renewal_unique() {
         wp_send_json_error(['message' => 'Invalid nonce.']);
     }
 
-    if (empty($_POST['subscription_id']) || !is_numeric($_POST['subscription_id'])) {
+    $subscription_id = absint($_POST['subscription_id'] ?? 0);
+    if (!$subscription_id) {
         wp_send_json_error(['message' => 'Invalid subscription ID.']);
     }
 
@@ -559,160 +559,124 @@ function handle_subscription_renewal_unique() {
         wp_send_json_error(['message' => 'WooCommerce Subscriptions not active.']);
     }
 
-    $subscription_id = (int) $_POST['subscription_id'];
     $subscription = wcs_get_subscription($subscription_id);
-
     if (!$subscription) {
         wp_send_json_error(['message' => 'Subscription not found.']);
     }
 
-    $user_id = (int) $subscription->get_user_id();
-    if (!$user_id) {
-        wp_send_json_error(['message' => 'User not found.']);
-    }
-
     $status = $subscription->get_status();
 
-    $user = get_userdata($user_id);
-    $first_name = $user ? $user->first_name : '';
-    $last_name  = $user ? $user->last_name : '';
+    /* ==================================================
+     * STEP 0: BLOCK DUPLICATE PENDING RENEWAL
+     * ================================================== */
+    if (in_array($status, ['active', 'on-hold'], true)) {
 
-    try {
-
-        /* =========================
-         * STEP 1: FIND MEMBERSHIP
-         * (SUBSCRIPTION-BASED)
-         * ========================= */
-        $existing_membership = $wpdb->get_var(
+        $pending_order_id = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT post_id
-                 FROM {$wpdb->postmeta}
-                 WHERE meta_key = '_subscription_id'
-                 AND meta_value = %d
+                "SELECT p.ID
+                 FROM {$wpdb->posts} p
+                 INNER JOIN {$wpdb->postmeta} pm
+                     ON p.ID = pm.post_id
+                 WHERE p.post_type = 'shop_order'
+                   AND p.post_status = 'wc-pending'
+                   AND pm.meta_key = '_subscription_id'
+                   AND pm.meta_value = %d
+                 ORDER BY p.post_date DESC
                  LIMIT 1",
                 $subscription_id
             )
         );
 
-        if (!$existing_membership) {
-            throw new Exception('No membership found for this subscription.');
+        if ($pending_order_id) {
+            $order = wc_get_order($pending_order_id);
+            wp_send_json_error([
+                'code'    => 'pending_order',
+                'message' => 'You already have a pending renewal order.',
+                'order_id'=> $pending_order_id,
+                'pay_url' => $order ? $order->get_checkout_payment_url() : ''
+            ]);
+        }
+    }
+
+    /* ==================================================
+     * STEP 1: GET PRODUCT + CLUB ID
+     * ================================================== */
+    $items = $subscription->get_items();
+    $product_id = $items ? reset($items)->get_product_id() : 0;
+
+    if (!$product_id) {
+        wp_send_json_error(['message' => 'Subscription product not found.']);
+    }
+
+    $club_id = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT meta_value
+             FROM {$wpdb->postmeta}
+             WHERE post_id = %d
+               AND meta_key = '_select_club_id'
+             LIMIT 1",
+            $product_id
+        )
+    );
+
+    /* ==================================================
+     * STEP 2: ACTIVE / ON-HOLD
+     * → ADMIN-LIKE PENDING RENEWAL
+     * ================================================== */
+    if (in_array($status, ['active', 'on-hold'], true)) {
+
+        // Create renewal order (Woo-native)
+        $renewal_order = wcs_create_renewal_order($subscription);
+
+        if (is_wp_error($renewal_order)) {
+            wp_send_json_error(['message' => $renewal_order->get_error_message()]);
         }
 
-        /* =========================
-         * STEP 2: ACTIVE / ON-HOLD
-         * → EXTEND SAME SUBSCRIPTION
-         * ========================= */
-        if (in_array($status, ['active', 'on-hold'], true)) {
+        // 🔑 CRITICAL FIX: mark order as payable
+        $renewal_order->update_status(
+            'pending',
+            'Awaiting manual renewal payment'
+        );
+        $renewal_order->set_payment_method('manual');
+        $renewal_order->save();
 
-            // 🔑 SAFE BASE DATE LOGIC (THIS WAS MISSING)
-            $current_end   = $subscription->get_date('end');
-            $next_payment  = $subscription->get_date('next_payment');
-            $base_date     = null;
-
-            if (!empty($current_end) && $current_end !== '0') {
-                $base_date = new DateTime($current_end);
-            } elseif (!empty($next_payment) && $next_payment !== '0') {
-                $base_date = new DateTime($next_payment);
-            } else {
-                $base_date = new DateTime(current_time('mysql'));
-            }
-
-            // Extend by 1 year
-            $base_date->modify('+1 year');
-            $new_end_date = $base_date->format('Y-m-d H:i:s');
-
-            // Next payment 5 minutes before end
-            $next_payment_dt = clone $base_date;
-            $next_payment_dt->modify('-5 minutes');
-
-            $subscription->update_dates([
-                'end'          => $new_end_date,
-                'next_payment' => $next_payment_dt->format('Y-m-d H:i:s'),
-            ]);
+        // 🔒 Put subscription on-hold (admin-like behaviour)
+        if ($status === 'active') {
+            $subscription->update_status(
+                'on-hold',
+                'Awaiting manual renewal payment'
+            );
             $subscription->save();
-
-            // Create renewal order
-            $renewal_order = wcs_create_renewal_order($subscription);
-            if (is_wp_error($renewal_order)) {
-                throw new Exception($renewal_order->get_error_message());
-            }
-
-            update_post_meta($renewal_order->get_id(), '_billing_first_name', $first_name);
-            update_post_meta($renewal_order->get_id(), '_billing_last_name', $last_name);
-
-            wp_send_json_success([
-                'message'         => 'Subscription renewed successfully.',
-                'membership_id'   => $existing_membership,
-                'subscription_id' => $subscription->get_id(),
-                'order_id'        => $renewal_order->get_id(),
-            ]);
         }
-
-        /* =========================
-         * STEP 3: EXPIRED / CANCELLED
-         * → CREATE NEW SUBSCRIPTION
-         * ========================= */
-        $items = $subscription->get_items();
-        $product_id = $items ? reset($items)->get_product_id() : null;
-
-        if (!$product_id || !WC_Subscriptions_Product::is_subscription($product_id)) {
-            throw new Exception('Invalid subscription product.');
-        }
-
-        $start_date = current_time('mysql');
-
-        $end_dt = new DateTime($start_date);
-        $end_dt->modify('+1 year');
-        $end_date = $end_dt->format('Y-m-d H:i:s');
-
-        $next_payment_dt = clone $end_dt;
-        $next_payment_dt->modify('-5 minutes');
-
-        $new_subscription = wcs_create_subscription([
-            'customer_id'      => $user_id,
-            'start_date'       => $start_date,
-            'end_date'         => $end_date,
-            'billing_period'   => WC_Subscriptions_Product::get_period($product_id),
-            'billing_interval' => WC_Subscriptions_Product::get_interval($product_id),
-            'status'           => 'on-hold',
-        ]);
-
-        if (is_wp_error($new_subscription)) {
-            throw new Exception($new_subscription->get_error_message());
-        }
-
-        $product = wc_get_product($product_id);
-        $new_subscription->add_product($product, 1);
-        $new_subscription->calculate_totals();
-
-        $new_subscription->update_dates([
-            'next_payment' => $next_payment_dt->format('Y-m-d H:i:s'),
-            'end'          => $end_date,
-        ]);
-        $new_subscription->save();
-
-        $new_order = wcs_create_renewal_order($new_subscription);
-        if (is_wp_error($new_order)) {
-            throw new Exception($new_order->get_error_message());
-        }
-
-        update_post_meta($new_order->get_id(), '_billing_first_name', $first_name);
-        update_post_meta($new_order->get_id(), '_billing_last_name', $last_name);
-
-        // 🔁 Relink membership to NEW subscription
-        update_post_meta($existing_membership, '_subscription_id', $new_subscription->get_id());
 
         wp_send_json_success([
-            'message'         => 'New subscription created and linked successfully.',
-            'membership_id'   => $existing_membership,
-            'subscription_id' => $new_subscription->get_id(),
-            'order_id'        => $new_order->get_id(),
+            'message'         => 'Pending renewal order created.',
+            'subscription_id' => $subscription_id,
+            'order_id'        => $renewal_order->get_id(),
+            'pay_url'         => $renewal_order->get_checkout_payment_url(),
+            'club_id'         => $club_id
         ]);
-
-    } catch (Exception $e) {
-        wp_send_json_error(['message' => $e->getMessage()]);
     }
+
+    /* ==================================================
+     * STEP 3: EXPIRED / CANCELLED
+     * → NOTHING ELSE, JUST RETURN CLUB ID
+     * ================================================== */
+    if (in_array($status, ['expired', 'cancelled'], true)) {
+
+        wp_send_json_success([
+            'message'         => 'Subscription expired/cancelled.',
+            'subscription_id' => $subscription_id,
+            'club_id'         => $club_id
+        ]);
+    }
+
+    wp_send_json_error(['message' => 'Unsupported subscription status.']);
 }
+
+
+
+
 
 
 

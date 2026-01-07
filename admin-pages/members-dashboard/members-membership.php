@@ -25,6 +25,7 @@ function get_membership_status($membership_id) {
         'wcm-active' => 'Active',
         'wcm-pending' => 'Pending',
         'wcm-paused' => 'Paused',
+        'wcm-pending-cancel'  => 'Pending Cancellation',
         'wcm-cancelled' => 'Cancelled',
         'wcm-expired' => 'Expired',
     ];
@@ -55,6 +56,7 @@ function get_logged_in_user_memberships() {
                     WHEN MAX(s.post_status) = 'wc-active' THEN 'Active'
                     WHEN MAX(s.post_status) = 'wc-pending' THEN 'Pending'
                     WHEN MAX(s.post_status) = 'wc-on-hold' THEN 'On Hold'
+                    WHEN MAX(s.post_status) = 'wc-pending-cancel' THEN 'Pending Cancellation'
                     WHEN MAX(s.post_status) = 'wc-cancelled' THEN 'Cancelled'
                     WHEN MAX(s.post_status) = 'wc-expired' THEN 'Expired'
                     ELSE 'Unknown'
@@ -170,7 +172,7 @@ function render_logged_in_user_membership_table($memberships) {
     $paged = isset($wp_query->query_vars['paged']) ? intval($wp_query->query_vars['paged']) : 1;
     $current_page = $paged > 0 ? $paged : 1;
 
-    $items_per_page = 20; // Number of subscriptions per page
+    $items_per_page = 60; // Number of subscriptions per page
     $total_pages = ceil(count($memberships) / $items_per_page);
 
     // Slice the memberships array for the current page
@@ -182,6 +184,7 @@ function render_logged_in_user_membership_table($memberships) {
         'Pending' => ['Pending', '#F8D7DA', '#721C24'],  // Light Red
         'On Hold' => ['On Hold', '#FCE58B', '#946C00'],  // Yellow
         'Cancelled' => ['Cancelled', '#E0E0E0', '#777'], // Gray
+        'Pending Cancellation' => ['Pending Cancellation', '#FFE8A1', '#856404'], // Amber
         'Expired' => ['Expired', '#FFA07A', '#D9534F'],  // Light Orange-Red
     ];
 
@@ -198,6 +201,8 @@ function render_logged_in_user_membership_table($memberships) {
                 <th style="padding: 10px; text-align: left;">End Date</th>
                 <th style="padding: 10px; text-align: left;">Status</th>
                 <th style="padding: 10px; text-align: left;">Actions</th>
+                
+
             </tr>
         </thead>
         <tbody>
@@ -237,22 +242,113 @@ function render_logged_in_user_membership_table($memberships) {
                             <?php echo esc_html($status_info[0]); ?>
                         </span>
                     </td>
-                    <td style="padding: 10px;" data-label="Action">
-    <?php
-        // Get status clearly and normalize
-        $allowed_statuses = ['active', 'on hold'];
-        $current_status = strtolower(trim($membership['subscription_status'] ?? ''));
+                 <td style="padding: 10px;" data-label="Actions">
+    <div style="display:flex; flex-wrap:wrap; gap:8px;">
 
-        if (in_array($current_status, $allowed_statuses, true)): 
-    ?>
-        <button 
-            class="renew-subscription-btn action-item" 
-            data-subscription-id="<?php echo esc_attr($membership['subscription_id']); ?>" 
-            style="padding: 5px 10px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">
-            Renew
-        </button>
-    <?php endif; ?>
+        <?php
+        global $wpdb;
+
+        $subscription_id = (int) $membership['subscription_id'];
+        $current_status  = strtolower(trim($membership['subscription_status'] ?? ''));
+
+        /* ==================================================
+         * PAY BUTTON (ONLY for ON HOLD + pending renewal)
+         * ================================================== */
+        if ($current_status === 'on hold') {
+
+            $pending_renewal_order_id = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT p.ID
+                     FROM {$wpdb->posts} p
+                     INNER JOIN {$wpdb->postmeta} pm
+                        ON p.ID = pm.post_id
+                     WHERE p.post_type = 'shop_order'
+                       AND p.post_status = 'wc-pending'
+                       AND pm.meta_key = '_subscription_renewal'
+                       AND pm.meta_value = %d
+                     ORDER BY p.post_date DESC
+                     LIMIT 1",
+                    $subscription_id
+                )
+            );
+
+            if ($pending_renewal_order_id) {
+                $order = wc_get_order($pending_renewal_order_id);
+                if ($order) {
+                    ?>
+                    <a
+                        href="<?php echo esc_url($order->get_checkout_payment_url()); ?>"
+                        class="action-item"
+                        style="padding:6px 12px;background:#28a745;color:#fff;border-radius:3px;text-decoration:none;">
+                        Pay
+                    </a>
+                    <?php
+                }
+            }
+        }
+        ?>
+
+        <?php
+        /* ==========================
+         * RENEW BUTTON (UNCHANGED)
+         * ========================== */
+        $allowed_statuses = ['active', 'expired', 'cancelled'];
+
+        $payment_method = strtolower((string) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT meta_value
+                 FROM {$wpdb->postmeta}
+                 WHERE post_id = %d
+                   AND meta_key = '_payment_method'
+                 LIMIT 1",
+                $subscription_id
+            )
+        ));
+
+        $is_blocked_gateway = (
+            strpos($payment_method, 'payfast') !== false ||
+            strpos($payment_method, 'stripe') !== false
+        );
+
+        if (
+            in_array($current_status, $allowed_statuses, true)
+            && !$is_blocked_gateway
+        ):
+        ?>
+            <button
+                class="renew-subscription-btn action-item"
+                data-subscription-id="<?php echo esc_attr($subscription_id); ?>"
+                style="padding:6px 12px;background:#007bff;color:#fff;border:none;border-radius:3px;cursor:pointer;">
+                Renew
+            </button>
+        <?php endif; ?>
+
+        <?php
+        /* ==========================
+         * CANCEL / UNCANCEL (UNCHANGED)
+         * ========================== */
+        if ($current_status === 'active'):
+        ?>
+            <button
+                class="cancel-subscription-btn action-item"
+                data-subscription-id="<?php echo esc_attr($subscription_id); ?>"
+                style="padding:6px 12px;background:#dc3545;color:#fff;border:none;border-radius:3px;cursor:pointer;">
+                Cancel
+            </button>
+
+        <?php elseif ($current_status === 'pending cancellation'): ?>
+            <button
+                class="uncancel-subscription-btn action-item"
+                data-subscription-id="<?php echo esc_attr($subscription_id); ?>"
+                style="padding:6px 12px;background:#28a745;color:#fff;border:none;border-radius:3px;cursor:pointer;">
+                Uncancel
+            </button>
+        <?php endif; ?>
+
+    </div>
 </td>
+
+
 
                 </tr>
             <?php endforeach; ?>
@@ -273,19 +369,16 @@ jQuery(document).ready(function ($) {
         const subscriptionId = $btn.data('subscription-id');
         const nonce = '<?php echo esc_js($renew_nonce); ?>';
 
-        // Safety check
         if (!subscriptionId) {
             alert('Invalid subscription ID.');
             return;
         }
 
-        // Confirm renewal
         if (!confirm('Are you sure you want to renew this subscription?')) {
             return;
         }
 
-        // Disable only THIS button (not all)
-        $btn.prop('disabled', true).text('Renewing...');
+        $btn.prop('disabled', true).text('Processing...');
 
         $.ajax({
             type: 'POST',
@@ -297,26 +390,122 @@ jQuery(document).ready(function ($) {
                 _ajax_nonce: nonce
             },
 
-            beforeSend: function () {
-                console.log('[Renew] Subscription ID:', subscriptionId);
-            },
-
             success: function (response) {
                 console.log('[Renew] Response:', response);
 
+                /* ===============================
+                 * SUCCESS
+                 * =============================== */
                 if (response.success) {
-                    alert('Subscription renewed successfully!');
-                    location.reload();
-                } else {
-                    alert('Renewal failed: ' + (response.data?.message || 'Unknown error'));
-                    $btn.prop('disabled', false).text('Renew');
+
+                    const data = response.data || {};
+                    const clubId = data.club_id ? parseInt(data.club_id, 10) : null;
+
+                    /* --------------------------------
+                     * EXPIRED / CANCELLED FLOW
+                     * -------------------------------- */
+                    if (data.message === 'Subscription expired/cancelled.' && clubId) {
+
+                        alert('Your subscription has expired or was cancelled.\nRedirecting you to buy a new subscription...');
+
+                        const clubRedirectMap = {
+                            4: '/mrcap/membership-registration-mrcap/',
+                            5: '/ccgtn/membership-registration-ccgtn/',
+                            7: '/mrcen/membership-registration-mrcen/'
+                            // add more mappings later
+                        };
+
+                        if (clubRedirectMap[clubId]) {
+                            window.location.href = clubRedirectMap[clubId];
+                        } else {
+                            alert('No registration page found for this club.');
+                            $btn.prop('disabled', false).text('Renew');
+                        }
+
+                        return;
+                    }
+
+                    /* --------------------------------
+                     * ACTIVE / ON-HOLD FLOW
+                     * -------------------------------- */
+                    alert('Pending renewal order created. Redirecting to payment...');
+                    window.location.href = data.pay_url || window.location.reload();
+                    return;
                 }
+
+                /* ===============================
+                 * ERROR
+                 * =============================== */
+                alert('Renewal failed: ' + (response.data?.message || 'Unknown error'));
+                $btn.prop('disabled', false).text('Renew');
             },
 
             error: function (xhr) {
                 console.error('[Renew] AJAX failed:', xhr.responseText);
                 alert('AJAX request failed.');
                 $btn.prop('disabled', false).text('Renew');
+            }
+        });
+    });
+
+});
+</script>
+
+
+
+<?php $cancel_nonce = wp_create_nonce('cancel_subscription_nonce'); ?>
+
+<script>
+jQuery(document).ready(function ($) {
+
+    /* =====================
+     * CANCEL
+     * ===================== */
+    $('.cancel-subscription-btn').on('click', function (e) {
+        e.preventDefault();
+
+        if (!confirm('Are you sure you want to cancel this subscription?')) return;
+
+        const btn = $(this);
+        btn.prop('disabled', true).text('Cancelling...');
+
+        $.post('<?php echo admin_url('admin-ajax.php'); ?>', {
+            action: 'cancel_subscription_custom',
+            subscription_id: btn.data('subscription-id'),
+            _ajax_nonce: '<?php echo esc_js($cancel_nonce); ?>'
+        }, function (res) {
+            if (res.success) {
+                alert('Subscription cancelled');
+                location.reload();
+            } else {
+                alert(res.data?.message || 'Failed');
+                btn.prop('disabled', false).text('Cancel');
+            }
+        });
+    });
+
+    /* =====================
+     * UNCANCEL
+     * ===================== */
+    $('.uncancel-subscription-btn').on('click', function (e) {
+        e.preventDefault();
+
+        if (!confirm('Do you want to reactivate this subscription?')) return;
+
+        const btn = $(this);
+        btn.prop('disabled', true).text('Reactivating...');
+
+        $.post('<?php echo admin_url('admin-ajax.php'); ?>', {
+            action: 'uncancel_subscription_custom',
+            subscription_id: btn.data('subscription-id'),
+            _ajax_nonce: '<?php echo esc_js($cancel_nonce); ?>'
+        }, function (res) {
+            if (res.success) {
+                alert('Subscription reactivated');
+                location.reload();
+            } else {
+                alert(res.data?.message || 'Failed');
+                btn.prop('disabled', false).text('Uncancel');
             }
         });
     });
