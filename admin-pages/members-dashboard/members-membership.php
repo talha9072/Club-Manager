@@ -411,7 +411,19 @@ jQuery(document).ready(function ($) {
                         const clubRedirectMap = {
                             4: '/mrcap/membership-registration-mrcap/',
                             5: '/ccgtn/membership-registration-ccgtn/',
-                            7: '/mrcen/membership-registration-mrcen/'
+                            7: '/mrcen/membership-registration-mrcen/',
+                            8: '/mrkzn/membership-registration-mrkzn/',
+                            9: '/mreca/membership-registration-mreca/',
+                            9: '/mreca/membership-registration-mreca/',
+                            10:'/mrgdn/membership-registration-mrgdn/',
+                            11:'/mrinl/membership-registration-mrinl/',
+                            12:'/mrnam/membership-registration-mrnam/',
+                            13:'/mrlwv/membership-registration-mrlwv/',
+                            14:'/mrwrd/membership-registration-mrwrd/',
+                            15:'/mcpta/membership-registration-mcpta/',
+                            16:'/cccpt/membership-registration-cccpt/',
+                            18:'/mrzim/membership-registration-mrzim/',
+
                             // add more mappings later
                         };
 
