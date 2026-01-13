@@ -78,6 +78,16 @@ if (!file_exists($file_path)) {
 require_once $file_path;
 
 
+
+// mrzim-rides
+$file_path = plugin_dir_path(__FILE__) . 'admin-pages/includes/mrzim-rides.php';
+if (!file_exists($file_path)) {
+    error_log('File not found: ' . $file_path);
+    return;
+}
+require_once $file_path;
+
+
 $file_path = plugin_dir_path(__FILE__) . 'admin-pages/includes/remove-et-builder.php';
 if (!file_exists($file_path)) {
     error_log('File not found: ' . $file_path);
