@@ -288,7 +288,9 @@ function export_all_club_users() {
         'Membership Plan', 'Next Payment Date', 'End Date', 
         'Status', 'Role', 
         'Partner Name', 'Partner Surname', 'Form Email', 'Mobile Number', 
-        'ID Number', 'ICE Contact Name', 'ICE Contact Number',
+        'ID Number',
+        'Medical Aid Company Name','Membership Number','Contact Phone','Doctor Name','Doctor Phone',
+        'ICE Contact Name', 'ICE Contact Number',
         'Street Address', 'Address Line 2', 'City', 'State / Province', 'ZIP / Postal Code'
     ];
     fputcsv($output, $headers);
@@ -332,6 +334,13 @@ function export_all_club_users() {
         $form_email       = $get_field($entry_id, '7');
         $mobile_number    = $get_field($entry_id, '8');
         $id_number        = $get_field($entry_id, '9');
+
+        $medical_aid_company = $get_field($entry_id, '79');
+        $membership_number   = $get_field($entry_id, '80');
+        $contact_phone       = $get_field($entry_id, '81');
+        $doctor_name         = $get_field($entry_id, '82');
+        $doctor_phone        = $get_field($entry_id, '83');
+
         $ice_name         = $get_field($entry_id, '84');
         $ice_contact      = $get_field($entry_id, '85');
 
@@ -357,6 +366,11 @@ function export_all_club_users() {
             $form_email ?: '',
             $mobile_number ?: '',
             $id_number ?: '',
+            $medical_aid_company ?: '',
+            $membership_number ?: '',
+            $contact_phone ?: '',
+            $doctor_name ?: '',
+            $doctor_phone ?: '',
             $ice_name ?: '',
             $ice_contact ?: '',
             $addr1 ?: '',
@@ -372,7 +386,6 @@ function export_all_club_users() {
     fclose($output);
     exit;
 }
-
 
 
 

@@ -100,7 +100,7 @@ function display_rides_form() {
     $club_ids = get_user_club_id(); // Get user's club IDs
 
     if (!$club_ids) {
-        echo "No club found for the logged-in user.";
+        echo "";
         return;
     }
 
