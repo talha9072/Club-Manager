@@ -246,7 +246,7 @@ function get_club_users_and_subscriptions() {
 
 
 
-function export_all_club_users() {
+function export_all_club_users($selected_ids = []) {
     global $wpdb;
 
     while (ob_get_level()) {
@@ -284,18 +284,24 @@ function export_all_club_users() {
     $output = fopen('php://output', 'w');
 
     $headers = [
-        'User ID', 'User Name', 'Email', 'Subscription ID', 
-        'Membership Plan', 'Next Payment Date', 'End Date', 
-        'Status', 'Role', 
-        'Partner Name', 'Partner Surname', 'Form Email', 'Mobile Number', 
+        'User ID','User Name','Email','Subscription ID',
+        'Membership Plan','Next Payment Date','End Date',
+        'Status','Role',
+        'Partner Name','Partner Surname','Form Email','Mobile Number',
         'ID Number',
         'Medical Aid Company Name','Membership Number','Contact Phone','Doctor Name','Doctor Phone',
-        'ICE Contact Name', 'ICE Contact Number',
-        'Street Address', 'Address Line 2', 'City', 'State / Province', 'ZIP / Postal Code'
+        'ICE Contact Name','ICE Contact Number',
+        'Street Address','Address Line 2','City','State / Province','ZIP / Postal Code'
     ];
-    fputcsv($output, $headers);
+
+    fputcsv($output,$headers);
 
     foreach ($club_users as $user) {
+
+        if (!empty($selected_ids) && !in_array($user['user_id'], $selected_ids)) {
+            continue;
+        }
+
         $membership = $user['membership'][0] ?? [];
         $user_id = intval($user['user_id']);
 
@@ -307,8 +313,11 @@ function export_all_club_users() {
                 $wpdb->prepare(
                     "SELECT e.id
                      FROM {$wpdb->prefix}gf_entry e
-                     INNER JOIN {$wpdb->prefix}gf_entry_meta em ON e.id = em.entry_id
-                     WHERE e.form_id = %d AND em.meta_key = '7' AND em.meta_value = %s
+                     INNER JOIN {$wpdb->prefix}gf_entry_meta em 
+                     ON e.id = em.entry_id
+                     WHERE e.form_id = %d 
+                     AND em.meta_key = '7' 
+                     AND em.meta_value = %s
                      ORDER BY e.date_created DESC
                      LIMIT 1",
                     $registration_form_id,
@@ -317,39 +326,42 @@ function export_all_club_users() {
             );
         }
 
-        $get_field = function($entry_id, $field_id) use ($wpdb) {
-            if (!$entry_id || !$field_id) return '';
+        $get_field = function($entry_id,$field_id) use ($wpdb){
+            if(!$entry_id || !$field_id) return '';
+
             return $wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT meta_value FROM {$wpdb->prefix}gf_entry_meta 
-                     WHERE entry_id = %d AND meta_key = %s LIMIT 1",
+                    "SELECT meta_value 
+                     FROM {$wpdb->prefix}gf_entry_meta
+                     WHERE entry_id = %d 
+                     AND meta_key = %s
+                     LIMIT 1",
                     $entry_id,
-                    (string) $field_id
+                    (string)$field_id
                 )
             );
         };
 
-        $partner_name     = $get_field($entry_id, '4');
-        $partner_surname  = $get_field($entry_id, '5');
-        $form_email       = $get_field($entry_id, '7');
-        $mobile_number    = $get_field($entry_id, '8');
-        $id_number        = $get_field($entry_id, '9');
+        $partner_name = $get_field($entry_id,'4');
+        $partner_surname = $get_field($entry_id,'5');
+        $form_email = $get_field($entry_id,'7');
+        $mobile_number = $get_field($entry_id,'8');
+        $id_number = $get_field($entry_id,'9');
 
-        $medical_aid_company = $get_field($entry_id, '79');
-        $membership_number   = $get_field($entry_id, '80');
-        $contact_phone       = $get_field($entry_id, '81');
-        $doctor_name         = $get_field($entry_id, '82');
-        $doctor_phone        = $get_field($entry_id, '83');
+        $medical_aid_company = $get_field($entry_id,'79');
+        $membership_number = $get_field($entry_id,'80');
+        $contact_phone = $get_field($entry_id,'81');
+        $doctor_name = $get_field($entry_id,'82');
+        $doctor_phone = $get_field($entry_id,'83');
 
-        $ice_name         = $get_field($entry_id, '84');
-        $ice_contact      = $get_field($entry_id, '85');
+        $ice_name = $get_field($entry_id,'84');
+        $ice_contact = $get_field($entry_id,'85');
 
-        // Individual address fields
-        $addr1  = $get_field($entry_id, '10.1');
-        $addr2  = $get_field($entry_id, '10.2');
-        $city   = $get_field($entry_id, '10.3');
-        $state  = $get_field($entry_id, '10.4');
-        $zip    = $get_field($entry_id, '10.5');
+        $addr1 = $get_field($entry_id,'10.1');
+        $addr2 = $get_field($entry_id,'10.2');
+        $city = $get_field($entry_id,'10.3');
+        $state = $get_field($entry_id,'10.4');
+        $zip = $get_field($entry_id,'10.5');
 
         $user_data = [
             strip_tags(trim($user['user_id'])),
@@ -357,9 +369,9 @@ function export_all_club_users() {
             strip_tags(trim($user['user_email'])),
             strip_tags(trim($membership['subscription_id'] ?? 'N/A')),
             strip_tags(trim($membership['membership_plan'] ?? 'N/A')),
-            !empty($membership['next_payment_date']) ? date('Y-m-d', strtotime($membership['next_payment_date'])) : 'N/A',
-            !empty($membership['schedule_end']) ? date('Y-m-d', strtotime($membership['schedule_end'])) : 'N/A',
-            ucfirst(str_replace('wc-', '', strip_tags(trim($membership['membership_status'] ?? 'N/A')))),
+            !empty($membership['next_payment_date']) ? date('Y-m-d',strtotime($membership['next_payment_date'])) : 'N/A',
+            !empty($membership['schedule_end']) ? date('Y-m-d',strtotime($membership['schedule_end'])) : 'N/A',
+            ucfirst(str_replace('wc-','',strip_tags(trim($membership['membership_status'] ?? 'N/A')))),
             strip_tags(trim($user['role'] ?? 'N/A')),
             $partner_name ?: '',
             $partner_surname ?: '',
@@ -380,7 +392,7 @@ function export_all_club_users() {
             $zip ?: ''
         ];
 
-        fputcsv($output, $user_data);
+        fputcsv($output,$user_data);
     }
 
     fclose($output);
@@ -399,9 +411,15 @@ function render_club_users_table($club_users, $all_club_users) {
   
    
     if (isset($_GET['export_all']) && $_GET['export_all'] == '1') {
-        export_all_club_users();
-        exit; // Stop further execution
-    }
+    export_all_club_users();
+    exit;
+}
+
+if (isset($_GET['export_selected']) && !empty($_GET['export_selected'])) {
+    $selected_ids = explode(',', sanitize_text_field($_GET['export_selected']));
+    export_all_club_users($selected_ids);
+    exit;
+}
     
     
     $status_counts = [
@@ -949,32 +967,21 @@ function render_club_users_table($club_users, $all_club_users) {
                         .catch(error => console.error('Error:', error));
                     }
                 } else if (action === 'export') {
-        // Initialize the CSV content with headers
-        let csvContent = "data:text/csv;charset=utf-8,";
-        csvContent += "User ID,User Name,Email,Subscription ID,Start Date,End Date,Status,Role\n";
 
-        // Process selected users
-        selectedUsers.forEach(userId => {
-            const row = document.querySelector(`#users-table-body tr td input[value="${userId}"]`).closest('tr');
-            const rowData = Array.from(row.querySelectorAll('td'))
-                .slice(1, -1) // Exclude the first (checkbox) and last (actions) columns
-                .map(td => td.textContent.trim().replace(/,/g, '')); // Remove commas from cell data
-            csvContent += rowData.join(',') + '\n';
-        });
+    const selectedUsers = Array.from(document.querySelectorAll('.select-user:checked'))
+        .map(input => input.value);
 
-        // Encode the CSV content
-        const encodedUri = encodeURI(csvContent);
-
-        // Create a temporary link for download
-        const link = document.createElement('a');
-        link.setAttribute('href', encodedUri);
-        link.setAttribute('download', 'club_users.csv');
-
-        // Append the link to the DOM, trigger the download, and remove the link
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    if (selectedUsers.length === 0) {
+        alert('Please select at least one user.');
+        return;
     }
+
+    const url = new URL(window.location.href);
+
+    url.searchParams.set('export_selected', selectedUsers.join(','));
+
+    window.location.href = url.toString();
+}
 
         });
 
