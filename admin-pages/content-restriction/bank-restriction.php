@@ -27,58 +27,80 @@ add_action('init', function () {
     }
 });
 
-add_filter('woocommerce_available_payment_gateways', function ($available_gateways) {
-    if (!isset($available_gateways['bacs'])) return $available_gateways;
+add_filter('woocommerce_available_payment_gateways', function ($gateways) {
 
-    $bacs_accounts = get_option('woocommerce_bacs_accounts');
-    if (!is_array($bacs_accounts) || empty($bacs_accounts)) {
-        unset($available_gateways['bacs']);
-        return $available_gateways;
+    if (is_admin()) return $gateways;
+
+    // Only apply on checkout or order-pay pages.
+    if (!is_checkout() && !is_wc_endpoint_url('order-pay')) return $gateways;
+
+    if (!function_exists('WC') || !WC()->session || !WC()->cart) return $gateways;
+
+    // Skip filtering ONLY during the actual "place order" AJAX call.
+    // WooCommerce also sends payment_method during checkout refresh AJAX
+    // (woocommerce_update_order_review) — that must still be filtered for
+    // correct display. Only the final woocommerce_checkout action (place order)
+    // should bypass filtering to prevent "Invalid payment method" errors.
+    if (
+        defined('DOING_AJAX') && DOING_AJAX &&
+        isset($_POST['action']) && $_POST['action'] === 'woocommerce_checkout'
+    ) {
+        return $gateways;
     }
 
-    // ✅ Pull from session instead of $_GET
-    $club_param = '';
-    if (function_exists('WC') && WC()->session) {
-        $club_param = WC()->session->get('club_for_bacs', '');
-    }
+    global $wpdb;
 
-    $club_param_trimmed = strtolower(trim($club_param));
-    $is_global = $club_param_trimmed === '' || $club_param_trimmed === 'global';
+    $chosen = WC()->session->get('chosen_payment_method', '');
 
-    $match_found = false;
-    foreach ($bacs_accounts as $account) {
-        $account_name = strtolower(trim($account['account_name']));
-        if (($is_global && $account_name === 'global') || (!$is_global && $account_name === $club_param_trimmed)) {
-            $match_found = true;
-            break;
+    /*
+     |----------------------------------
+     | BACS (Bank Transfer)
+     |----------------------------------
+     */
+    if (isset($gateways['bacs'])) {
+
+        $bacs_accounts = get_option('woocommerce_bacs_accounts');
+
+        if (!is_array($bacs_accounts) || empty($bacs_accounts)) {
+            unset($gateways['bacs']);
+        } else {
+
+            $club_param = WC()->session->get('club_for_bacs', '');
+            $club_param_trimmed = strtolower(trim($club_param));
+            $is_global = $club_param_trimmed === '' || $club_param_trimmed === 'global';
+
+            $match_found = false;
+
+            foreach ($bacs_accounts as $account) {
+                $account_name = strtolower(trim($account['account_name']));
+                if (
+                    ($is_global && $account_name === 'global') ||
+                    (!$is_global && $account_name === $club_param_trimmed)
+                ) {
+                    $match_found = true;
+                    break;
+                }
+            }
+
+            if (!$match_found) {
+                unset($gateways['bacs']);
+            }
         }
     }
 
-    if (!$match_found) {
-        unset($available_gateways['bacs']);
-    }
-
-    return $available_gateways;
-});
-
-
-
-add_filter('woocommerce_available_payment_gateways', function ($available_gateways) {
-    global $wpdb;
-
-    if (!function_exists('WC') || !WC()->cart) return $available_gateways;
-
+    /*
+     |----------------------------------
+     | CART ANALYSIS (for Yoco Link)
+     |----------------------------------
+     */
     $cart = WC()->cart->get_cart();
-    if (!$cart) return $available_gateways;
-
     $club_ids = [];
     $require_global_yoco = false;
 
     foreach ($cart as $item) {
         if (empty($item['product_id'])) continue;
 
-        $product_id = $item['product_id'];
-        $club_id = get_post_meta($product_id, '_select_club_id', true);
+        $club_id = get_post_meta($item['product_id'], '_select_club_id', true);
         $club_id = is_string($club_id) ? strtolower(trim($club_id)) : $club_id;
 
         if (empty($club_id) || $club_id === 'global') {
@@ -90,52 +112,102 @@ add_filter('woocommerce_available_payment_gateways', function ($available_gatewa
 
     $missing_yoco = false;
 
-    // Check fallback Yoco config for global products
+    // Global fallback Yoco
     if ($require_global_yoco) {
-        $serialized_data = get_option('woocommerce_yoco_accounts');
-        $has_default_yoco = false;
-
-        if ($serialized_data) {
-            $unserialized = maybe_unserialize($serialized_data);
-            if (is_array($unserialized) && !empty($unserialized[0]['account_name'])) {
-                $has_default_yoco = true;
-            }
-        }
-
-        if (!$has_default_yoco) {
+        $data = maybe_unserialize(get_option('woocommerce_yoco_accounts'));
+        if (!is_array($data) || empty($data[0]['account_name'])) {
             $missing_yoco = true;
         }
     }
 
-    // Check wp_payment_gateways for Yoco links for each club
+    // Club-based Yoco links
     if (!empty($club_ids)) {
         $placeholders = implode(',', array_fill(0, count($club_ids), '%d'));
-        $sql = "SELECT club_id, yoco_link FROM wp_payment_gateways WHERE club_id IN ($placeholders)";
-        $results = $wpdb->get_results($wpdb->prepare($sql, $club_ids));
+        $results = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT club_id, yoco_link FROM wp_payment_gateways WHERE club_id IN ($placeholders)",
+                $club_ids
+            )
+        );
 
-        $clubs_with_yoco = [];
+        $valid = [];
         foreach ($results as $row) {
             if (!empty($row->yoco_link)) {
-                $clubs_with_yoco[] = (int) $row->club_id;
+                $valid[] = (int) $row->club_id;
             }
         }
 
         foreach ($club_ids as $cid) {
-            if (!in_array($cid, $clubs_with_yoco, true)) {
+            if (!in_array($cid, $valid, true)) {
                 $missing_yoco = true;
                 break;
             }
         }
     }
 
-    // Remove only the specific custom Yoco gateway by ID
-    if ($missing_yoco && isset($available_gateways['yoco_gateway'])) {
-        unset($available_gateways['yoco_gateway']);
+    /*
+     |----------------------------------
+     | YOCO PAYMENT LINK (yoco_gateway)
+     |----------------------------------
+     */
+    if ($missing_yoco && isset($gateways['yoco_gateway']) && $chosen !== 'yoco_gateway') {
+        unset($gateways['yoco_gateway']);
     }
 
-    return $available_gateways;
-}, 10, 1);
+    /*
+     |----------------------------------
+     | CLUB TOGGLE LOGIC
+     |----------------------------------
+     */
+    $club_id = bca_get_club_id_from_context();
 
+    if ($club_id) {
+
+        $club = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT payfast_enabled, stripe_enabled, yoco_enabled
+                 FROM {$wpdb->prefix}clubs
+                 WHERE club_id = %d",
+                $club_id
+            )
+        );
+
+        if ($club) {
+
+            // PAYFAST
+            if (empty($club->payfast_enabled)) {
+                if ($chosen !== 'payfast' && isset($gateways['payfast'])) {
+                    unset($gateways['payfast']);
+                }
+            }
+
+            // STRIPE
+            if (empty($club->stripe_enabled)) {
+                foreach ($gateways as $key => $gateway) {
+                    if (strpos($key, 'stripe') !== false && $chosen !== $key) {
+                        unset($gateways[$key]);
+                    }
+                }
+            }
+
+            // NORMAL YOCO (NOT yoco_gateway)
+            if (empty($club->yoco_enabled)) {
+                foreach ($gateways as $key => $gateway) {
+                    if (
+                        strpos($key, 'yoco') !== false &&
+                        $key !== 'yoco_gateway' &&
+                        $chosen !== $key
+                    ) {
+                        unset($gateways[$key]);
+                    }
+                }
+            }
+        }
+    }
+
+    return $gateways;
+
+}, 999);
 
 
 
