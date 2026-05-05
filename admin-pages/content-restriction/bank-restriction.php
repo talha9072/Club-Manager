@@ -19,10 +19,11 @@ add_filter('woocommerce_bacs_accounts', function ($accounts) {
     return !empty($filtered_accounts) ? array_values($filtered_accounts) : $accounts;
 });
 
-// 🧠 Store `club` param from URL into WC session (only once)
-add_action('init', function () {
+    // Store `club` param from URL into WC session (only once)
+    // Use `woocommerce_init` so WC()->session is available early.
+add_action('woocommerce_init', function () {
     if (isset($_GET['club']) && function_exists('WC') && WC()->session) {
-        $club_param = sanitize_text_field($_GET['club']);
+        $club_param = sanitize_text_field(urldecode($_GET['club']));
         WC()->session->set('club_for_bacs', $club_param);
     }
 });
@@ -65,8 +66,12 @@ add_filter('woocommerce_available_payment_gateways', function ($gateways) {
             unset($gateways['bacs']);
         } else {
 
+            // Prefer session value, but fall back to URL param to avoid race conditions
             $club_param = WC()->session->get('club_for_bacs', '');
-            $club_param_trimmed = strtolower(trim($club_param));
+            if (empty($club_param) && isset($_GET['club'])) {
+                $club_param = sanitize_text_field(urldecode($_GET['club']));
+            }
+            $club_param_trimmed = strtolower(trim((string) $club_param));
             $is_global = $club_param_trimmed === '' || $club_param_trimmed === 'global';
 
             $match_found = false;
