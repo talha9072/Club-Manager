@@ -1040,6 +1040,7 @@ function render_edit_user_form() {
          WHERE sub.post_type = 'shop_subscription'
            AND customer_user.meta_value = %d
            AND order_meta.meta_key = '_product_id'
+         ORDER BY sub.ID DESC
          LIMIT 1",
         $user_id
     );
