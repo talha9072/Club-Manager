@@ -222,3 +222,111 @@ add_action('plugins_loaded', function() {
     }, 99);
 
 });
+
+
+
+/**
+ * BMW Clubs Africa:
+ * Control PayFast visibility based on Club settings.
+ * - Hide PayFast if club product exists but club has no PayFast settings
+ * - Show PayFast for Global products
+ * - Force-enable PayFast for Global products even if WooCommerce disables it
+ */
+add_filter('woocommerce_available_payment_gateways', function($gateways) {
+
+    if (!is_checkout()) {
+        return $gateways;
+    }
+
+    global $wpdb;
+
+    $club_id = null;
+    $raw_club = null;
+
+    // Detect club ID from cart (clean + safe)
+    foreach (WC()->cart->get_cart() as $item) {
+        $raw_club = trim(get_post_meta($item['product_id'], '_select_club_id', true));
+
+        // Skip empty and global
+        if ($raw_club === '' || strtolower($raw_club) === 'global') {
+            continue;
+        }
+
+        // Accept only numeric real club IDs
+        if (ctype_digit($raw_club)) {
+            $club_id = intval($raw_club);
+            break;
+        }
+    }
+
+    // ----------------------------------------------------------
+    // CASE 1: GLOBAL PRODUCT → PayFast must show
+    // ----------------------------------------------------------
+    if (empty($club_id)) {
+
+        // If PayFast is already visible → done
+        if (isset($gateways['payfast'])) {
+            return $gateways;
+        }
+
+        // If PayFast is hidden by WooCommerce → force-enable it
+        $all_gateways = WC()->payment_gateways()->payment_gateways();
+        if (isset($all_gateways['payfast'])) {
+            $gateways['payfast'] = $all_gateways['payfast'];
+        }
+
+        return $gateways;
+    }
+
+    // ----------------------------------------------------------
+    // CASE 2: CLUB PRODUCT → Check club PayFast settings
+    // ----------------------------------------------------------
+
+    $row = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM {$wpdb->prefix}clubs WHERE club_id = %d",
+        $club_id
+    ));
+
+    $club_has_settings = false;
+
+    if ($row) {
+
+        // Live mode OK?
+        if (!empty($row->payfast_merchant_id) &&
+            !empty($row->payfast_merchant_key)) {
+            $club_has_settings = true;
+        }
+
+        // Sandbox mode OK?
+        if ($row->sandbox_enabled == 1 &&
+            !empty($row->sandbox_merchant_id) &&
+            !empty($row->sandbox_merchant_key)) {
+            $club_has_settings = true;
+        }
+    }
+
+    // If CLUB product but NO PayFast settings → hide PayFast
+    if (!$club_has_settings) {
+        unset($gateways['payfast']);
+        return $gateways;
+    }
+
+    // If PayFast already enabled → return as is
+    if (isset($gateways['payfast'])) {
+        return $gateways;
+    }
+
+    // ----------------------------------------------------------
+    // CASE 3: Club has PayFast settings but WooCommerce hid gateway
+    // → Force-enable using already loaded instance (NO class reload)
+    // ----------------------------------------------------------
+
+    $all_gateways = WC()->payment_gateways()->payment_gateways();
+    if (isset($all_gateways['payfast'])) {
+        $gateways['payfast'] = $all_gateways['payfast'];
+    }
+
+    return $gateways;
+
+});
+

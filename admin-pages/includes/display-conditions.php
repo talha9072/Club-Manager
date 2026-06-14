@@ -870,6 +870,7 @@ if ($force_query_param || (empty($slug) && isset($_GET['club']) && !empty($_GET[
         'mcpta' => '[maxmegamenu location=max_mega_menu_10]',
         'cccpt' => '[maxmegamenu location=max_mega_menu_11]',
         'ccgtn' => '[maxmegamenu location=max_mega_menu_12]',
+		'mrzim' => '[maxmegamenu location=max_mega_menu_13]',
     ];
 
     //  Final output

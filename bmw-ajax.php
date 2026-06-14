@@ -532,7 +532,6 @@ function handle_subscription_renewal() {
 
 
 
-
 // Register the AJAX handler
 add_action('wp_ajax_renew_subscription_unique', 'handle_subscription_renewal_unique');
 add_action('wp_ajax_nopriv_renew_subscription_unique', 'handle_subscription_renewal_unique');
@@ -681,11 +680,95 @@ function handle_subscription_renewal_unique() {
 
 
 
+
+
+
+
+
+
+
+
+
 add_action('init', function() {
     global $wp_rewrite;
     $wp_rewrite->pagination_base = 'page';
     $wp_rewrite->flush_rules(false); // Flush rewrite rules to recognize pagination
 });
+
+
+
+
+
+
+
+
+
+
+
+add_action('wp_ajax_cancel_subscription_custom', 'handle_cancel_subscription_custom');
+
+function handle_cancel_subscription_custom() {
+
+    if (
+        !isset($_POST['_ajax_nonce']) ||
+        !wp_verify_nonce($_POST['_ajax_nonce'], 'cancel_subscription_nonce')
+    ) {
+        wp_send_json_error(['message' => 'Invalid nonce']);
+    }
+
+    $subscription_id = absint($_POST['subscription_id'] ?? 0);
+    if (!$subscription_id) {
+        wp_send_json_error(['message' => 'Invalid subscription']);
+    }
+
+    $subscription = wcs_get_subscription($subscription_id);
+    if (!$subscription || $subscription->get_status() !== 'active') {
+        wp_send_json_error(['message' => 'Subscription not cancellable']);
+    }
+
+    // Schedule cancellation at period end
+    $subscription->update_status('pending-cancel', 'Cancelled by user');
+    $subscription->save();
+
+    wp_send_json_success(['message' => 'Subscription cancelled']);
+}
+
+
+
+
+add_action('wp_ajax_uncancel_subscription_custom', 'handle_uncancel_subscription_custom');
+
+function handle_uncancel_subscription_custom() {
+
+    if (
+        !isset($_POST['_ajax_nonce']) ||
+        !wp_verify_nonce($_POST['_ajax_nonce'], 'cancel_subscription_nonce')
+    ) {
+        wp_send_json_error(['message' => 'Invalid nonce']);
+    }
+
+    $subscription_id = absint($_POST['subscription_id'] ?? 0);
+    if (!$subscription_id) {
+        wp_send_json_error(['message' => 'Invalid subscription']);
+    }
+
+    $subscription = wcs_get_subscription($subscription_id);
+    if (!$subscription || $subscription->get_status() !== 'pending-cancel') {
+        wp_send_json_error(['message' => 'Subscription not uncancellable']);
+    }
+
+    $subscription->update_status('active', 'Cancellation reversed');
+    $subscription->save();
+
+    wp_send_json_success(['message' => 'Subscription reactivated']);
+}
+
+
+
+
+
+
+
 
 
 
@@ -815,314 +898,9 @@ add_action('wp_ajax_nopriv_my_event_csv', 'my_event_csv_ajax');
 
 
 
-/* ==========================================================================
-   GLOBAL PRODUCT LOOP — SAFE CURRENCY REPLACER (NO LOOPS, NO OBSERVER)
-=========================================================================== */
-add_action('wp_head', function () {
 
-    if (is_admin()) return;
 
-    // STOP this script on cart + checkout + thank you
-    if (is_cart() || is_checkout() || is_order_received_page()) return;
 
-    global $wpdb;
-
-    // Build product → currency map
-    $rows = $wpdb->get_results("
-        SELECT 
-            p.ID as product_id,
-            IFNULL(c.club_currency, 'R') as club_currency
-        FROM wp_posts p
-        LEFT JOIN wp_postmeta pm 
-            ON pm.post_id = p.ID AND pm.meta_key = '_select_club_id'
-        LEFT JOIN wp_clubs c 
-            ON c.club_id = pm.meta_value
-        WHERE p.post_type = 'product' AND p.post_status = 'publish'
-    ");
-
-    $map = [];
-    foreach ($rows as $r) {
-        $map[(int)$r->product_id] = $r->club_currency ?: 'R';
-    }
-?>
-<script>
-window.productCurrencyMap = <?php echo json_encode($map); ?>;
-
-document.addEventListener("DOMContentLoaded", function () {
-
-    const map = window.productCurrencyMap || {};
-
-    function updateProductLoopPrices() {
-
-        const items = document.querySelectorAll("li.product");
-
-        items.forEach(li => {
-
-            if (li.dataset.currencyUpdated === "1") return;
-
-            const idClass = [...li.classList].find(c => c.startsWith("post-"));
-            if (!idClass) return;
-
-            const pid = idClass.replace("post-", "");
-            const currency = map[pid];
-            if (!currency) return;
-
-            const priceContainers = li.querySelectorAll(".price, .amount, bdi, .woocommerce-Price-currencySymbol");
-
-            priceContainers.forEach(el => {
-                let html = el.innerHTML;
-
-                html = html.replace(/<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
-                    `<span class="woocommerce-Price-currencySymbol">${currency}</span>`);
-
-                html = html.replace(/R(?=\d)/g, currency);
-
-                el.innerHTML = html;
-            });
-
-            li.dataset.currencyUpdated = "1";
-        });
-    }
-
-    // INITIAL
-    updateProductLoopPrices();
-
-    // SAFE WooCommerce event triggers (NO infinite loops)
-    [
-        "updated_wc_div",
-        "wc_fragment_refresh",
-        "updated_cart_totals",
-        "updated_checkout",
-        "wc_cart_button_updated"
-    ].forEach(ev => {
-        document.body.addEventListener(ev, updateProductLoopPrices);
-    });
-
-});
-</script>
-<?php
-});
-
-
-/* ==========================================================================
-   SINGLE PRODUCT PAGE — SAFE VERSION
-=========================================================================== */
-add_action('wp_head', function () {
-
-    if (!is_product() || is_admin()) return;
-
-    global $post, $wpdb;
-
-    $product_id = $post->ID;
-    $club_id = get_post_meta($product_id, '_select_club_id', true);
-    if (empty($club_id)) return;
-
-    $club_currency = $wpdb->get_var(
-        $wpdb->prepare("SELECT IFNULL(club_currency, 'R') FROM wp_clubs WHERE club_id = %d", $club_id)
-    );
-
-    if (!$club_currency) $club_currency = "R";
-?>
-<script>
-document.addEventListener("DOMContentLoaded", function () {
-
-    const currency = "<?php echo esc_js($club_currency); ?>";
-
-    function updateSingleProductCurrency() {
-        const priceElements = document.querySelectorAll(".price, .woocommerce-Price-currencySymbol, bdi");
-
-        priceElements.forEach(el => {
-            let html = el.innerHTML;
-
-            html = html.replace(/<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
-                                `<span class="woocommerce-Price-currencySymbol">${currency}</span>`);
-
-            html = html.replace(/R(?=\d)/g, currency);
-
-            el.innerHTML = html;
-        });
-    }
-
-    updateSingleProductCurrency();
-
-    // If single product has variation change events
-    document.body.addEventListener("woocommerce_variation_has_changed", updateSingleProductCurrency);
-    document.body.addEventListener("show_variation", updateSingleProductCurrency);
-
-});
-</script>
-<?php
-});
-
-
-
-/* ============================================================================
-   CART + CHECKOUT + THANK YOU PAGE — CLUB CURRENCY REPLACER (NO OBSERVER)
-============================================================================ */
-add_action('wp_head', function () {
-
-    if (is_admin()) return;
-
-    // Run on cart, checkout, and order received page
-    if (!is_cart() && !is_checkout() && !is_order_received_page()) return;
-
-    global $woocommerce, $wpdb;
-
-    // Get cart items
-    $items = $woocommerce->cart->get_cart();
-
-    // If on thank-you page, cart will be empty → load order items
-    if (empty($items) && is_order_received_page()) {
-
-        $order_id = absint(get_query_var('order-received'));
-        if ($order_id) {
-            $order = wc_get_order($order_id);
-            if ($order) {
-                $items = $order->get_items();
-            }
-        }
-    }
-
-    if (empty($items)) return;
-
-    // First product
-    $first_item = reset($items);
-    $product_id = is_object($first_item)
-        ? $first_item->get_product_id()
-        : $first_item['product_id'];
-
-    $club_id = get_post_meta($product_id, '_select_club_id', true);
-    if (empty($club_id)) return;
-
-    $club_currency = $wpdb->get_var(
-        $wpdb->prepare("SELECT IFNULL(club_currency, 'R')
-                        FROM wp_clubs WHERE club_id = %d", $club_id)
-    );
-
-    if (!$club_currency) $club_currency = "R";
-?>
-<script>
-document.addEventListener("DOMContentLoaded", function () {
-
-    const currency = "<?php echo esc_js($club_currency); ?>";
-    console.log("💰 Currency Loaded:", currency);
-
-    function updateCurrency() {
-        const elems = document.querySelectorAll(
-            ".woocommerce-Price-amount, .woocommerce-Price-currencySymbol, bdi, .order-total, .cart_totals, .woocommerce-order"
-        );
-
-        elems.forEach(el => {
-            let html = el.innerHTML;
-
-            html = html.replace(
-                /<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
-                `<span class="woocommerce-Price-currencySymbol">${currency}</span>`
-            );
-
-            html = html.replace(/R(?=\d)/g, currency);
-            el.innerHTML = html;
-        });
-    }
-
-    // First run
-    updateCurrency();
-
-    // WooCommerce checkout update events (NO OBSERVER)
-    [
-        "updated_checkout",
-        "update_checkout",
-        "updated_cart_totals",
-        "updated_wc_div",
-        "payment_method_selected"
-    ].forEach(eventName => {
-        jQuery(document.body).on(eventName, function () {
-            updateCurrency();
-        });
-    });
-
-});
-</script>
-<?php
-});
-
-
-
-
-/* ============================================================================
-   SINGLE AJDE EVENT — CLUB-BASED WOO CURRENCY REPLACER
-============================================================================ */
-add_action('wp_head', function () {
-
-    if (is_admin()) return;
-
-    global $post, $wpdb;
-
-    // Run only on single AJDE Event pages
-    if (!$post || $post->post_type !== 'ajde_events') {
-        return;
-    }
-
-    // Get club ID from event meta
-    $club_id = get_post_meta($post->ID, '_select_club_id', true);
-    if (empty($club_id)) return;
-
-    // Get club currency from DB
-    $club_currency = $wpdb->get_var(
-        $wpdb->prepare(
-            "SELECT IFNULL(club_currency, 'R') FROM wp_clubs WHERE club_id = %d",
-            $club_id
-        )
-    );
-
-    if (empty($club_currency)) $club_currency = "R"; // fallback
-?>
-<script>
-document.addEventListener("DOMContentLoaded", function () {
-
-    const currency = "<?php echo esc_js($club_currency); ?>";
-    console.log("🎟 AJDE Event → Club Currency:", currency);
-
-    /**
-     * Replace WooCommerce currency symbols on the page
-     */
-    function replaceAjdeEventCurrency() {
-
-        // Find WooCommerce prices (only if present)
-        const elements = document.querySelectorAll(
-            ".woocommerce-Price-currencySymbol, .woocommerce-Price-amount, bdi, .price"
-        );
-
-        if (!elements.length) {
-            console.log("ℹ️ No WooCommerce prices found on this AJDE event.");
-            return;
-        }
-
-        elements.forEach(el => {
-            let html = el.innerHTML;
-
-            // Replace Woo symbol span
-            html = html.replace(
-                /<span class="woocommerce-Price-currencySymbol">.*?<\/span>/g,
-                `<span class="woocommerce-Price-currencySymbol">${currency}</span>`
-            );
-
-            // Replace raw "R" before digits
-            html = html.replace(/R(?=\d)/g, currency);
-
-            el.innerHTML = html;
-        });
-
-        console.log("💱 Currency replaced on AJDE event page →", currency);
-    }
-
-    // Run once on load
-    replaceAjdeEventCurrency();
-
-});
-</script>
-<?php
-});
 
 
 
@@ -1193,6 +971,9 @@ function bca_get_club_id_from_context() {
 
     return null;
 }
+
+
+
 
 
 

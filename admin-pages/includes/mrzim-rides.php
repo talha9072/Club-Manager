@@ -141,111 +141,117 @@ add_action('init', function () {
 
 
 
+/**
+ * Gravity Forms ID 48 - One entry per logged-in user
+ * Keeps only the most recent submission
+ * Automatically deletes older entries from the same user
+ *
+ * Put this code in your theme's functions.php or (better) in a custom plugin
+ */
 
+add_action('gform_after_submission_48', 'gf48_keep_only_latest_entry', 10, 2);
 
+function gf48_keep_only_latest_entry($entry, $form) {
+    // Safety checks
+    if ($form['id'] != 48) {
+        return;
+    }
 
+    if (!is_user_logged_in()) {
+        return; // anonymous users = normal behavior (multiple entries allowed)
+    }
 
+    $user_id = get_current_user_id();
 
-// Gravity Forms ID 8: Only ONE entry per logged-in user (update existing on resubmit)
+    // Find all previous entries by this user
+    $search_criteria = [
+        'field_filters' => [
+            [
+                'key'   => 'created_by',
+                'value' => $user_id,
+            ],
+        ],
+    ];
 
-// Step 1: Pre-populate form with user's existing entry (if any)
-add_filter('gform_pre_render_8', 'gf8_populate_user_entry');
-add_filter('gform_pre_validation_8', 'gf8_populate_user_entry');
-add_filter('gform_pre_submission_filter_8', 'gf8_populate_user_entry');
-add_filter('gform_admin_pre_render_8', 'gf8_populate_user_entry'); // Optional: admin mein bhi dikhe
+    // Get all entries (except the one we just created)
+    $entries = GFAPI::get_entries($form['id'], $search_criteria);
 
-function gf8_populate_user_entry($form) {
+    foreach ($entries as $old_entry) {
+        // Don't delete the entry we just submitted
+        if ($old_entry['id'] !== $entry['id']) {
+            GFAPI::delete_entry($old_entry['id']);
+        }
+    }
+}
+
+// ================================================
+// Optional: Pre-populate form with latest entry
+// ================================================
+
+add_filter('gform_pre_render_48',    'gf48_pre_populate_latest_entry');
+add_filter('gform_pre_validation_48', 'gf48_pre_populate_latest_entry');
+add_filter('gform_pre_submission_filter_48', 'gf48_pre_populate_latest_entry');
+// add_filter('gform_admin_pre_render_48', 'gf48_pre_populate_latest_entry'); // uncomment if needed in admin
+
+function gf48_pre_populate_latest_entry($form) {
+    if ($form['id'] != 48) {
+        return $form;
+    }
+
     if (!is_user_logged_in()) {
         return $form;
     }
 
     $user_id = get_current_user_id();
 
-    // Find existing entry by this user for form 8
-    $search_criteria = array(
-        'field_filters' => array(
-            array(
+    $search_criteria = [
+        'field_filters' => [
+            [
                 'key'   => 'created_by',
                 'value' => $user_id,
-            ),
-        ),
-    );
+            ],
+        ],
+    ];
 
-    $sorting = array('key' => 'id', 'direction' => 'DESC'); // Latest entry
-    $paging  = array('offset' => 0, 'page_size' => 1);
+    $sorting = ['key' => 'id', 'direction' => 'DESC'];
+    $paging  = ['offset' => 0, 'page_size' => 1];
 
     $entries = GFAPI::get_entries($form['id'], $search_criteria, $sorting, $paging);
 
-    if (!empty($entries)) {
-        $entry = $entries[0];
+    if (empty($entries)) {
+        return $form;
+    }
 
-        // Loop through all fields and set default value from existing entry
-        foreach ($form['fields'] as &$field) {
-            $field_id = $field->id;
-            if (isset($entry[$field_id])) {
-                $value = $entry[$field_id];
+    $latest_entry = $entries[0];
 
-                if (is_array($value)) {
+    foreach ($form['fields'] as &$field) {
+        $field_id = $field->id;
+
+        if (isset($latest_entry[$field_id])) {
+            $value = $latest_entry[$field_id];
+
+            // Better handling for different field types
+            switch ($field->get_input_type()) {
+                case 'checkbox':
+                case 'list':
                     $field->defaultValue = maybe_unserialize($value);
-                } else {
+                    break;
+
+                case 'multiselect':
+                    $field->defaultValue = $value ? explode(',', $value) : '';
+                    break;
+
+                case 'number':
+                    $field->defaultValue = (string) $value;
+                    break;
+
+                default:
                     $field->defaultValue = $value;
-                }
             }
         }
     }
 
     return $form;
-}
-
-// Step 2: After submission - if user already has an entry, update it instead of keeping new one
-add_action('gform_after_submission_8', 'gf8_update_instead_of_create_new', 10, 2);
-
-function gf8_update_instead_of_create_new($entry, $form) {
-    if (!is_user_logged_in()) {
-        return; // Anonymous users ko normal new entry banne do
-    }
-
-    $user_id      = get_current_user_id();
-    $new_entry_id = $entry['id'];
-
-    // Find all entries by this user
-    $search_criteria = array(
-        'field_filters' => array(
-            array(
-                'key'   => 'created_by',
-                'value' => $user_id,
-            ),
-        ),
-    );
-
-    $entries = GFAPI::get_entries($form['id'], $search_criteria);
-
-    if (count($entries) > 1) {
-        // New entry created → delete it and update the existing one
-        GFAPI::delete_entry($new_entry_id);
-
-        // Get the remaining (previous) entry
-        $remaining_entries = GFAPI::get_entries($form['id'], $search_criteria);
-        if (!empty($remaining_entries)) {
-            $existing_entry = $remaining_entries[0];
-
-            // Update with new submitted values
-            foreach ($form['fields'] as $field) {
-                $field_id   = (string) $field->id;
-                $input_name = 'input_' . str_replace('.', '_', $field_id);
-
-                if (isset($_POST[$input_name])) {
-                    $existing_entry[$field_id] = $_POST[$input_name];
-                }
-            }
-
-            $existing_entry['date_updated'] = current_time('mysql');
-            $existing_entry['created_by']   = $user_id;
-
-            GFAPI::update_entry($existing_entry);
-        }
-    }
-    // First time → only one entry → nothing to do
 }
 
 
@@ -254,21 +260,23 @@ function gf8_update_instead_of_create_new($entry, $form) {
 
 
 /**
- * FORM 8 – FINAL VIN VALIDATION
- * - Same-form duplicate VINs (simple)
- * - Global VIN check (ignore user's latest entry)
- * VIN fields: 28, 41, 51, 62, 70
+ * Gravity Forms ID 48 – FINAL VIN VALIDATION
+ * - Prevents duplicate VINs within the same form submission
+ * - Global check: prevents VIN already used by ANY other entry
+ *   (except the current user's own latest entry)
+ *
+ * VIN fields: 117, 118, 119, 120
  */
 
+
 /* ======================================================
- * BACKEND – GLOBAL VIN CHECK (IGNORE USER LATEST ENTRY)
+ * BACKEND – GLOBAL VIN CHECK (ignores user's own latest entry)
  * ====================================================== */
 
-add_action('wp_ajax_gf8_check_vin_global', 'gf8_check_vin_global');
-add_action('wp_ajax_nopriv_gf8_check_vin_global', 'gf8_check_vin_global');
+add_action('wp_ajax_gf48_check_vin_global', 'gf48_check_vin_global');
+add_action('wp_ajax_nopriv_gf48_check_vin_global', 'gf48_check_vin_global');
 
-function gf8_check_vin_global() {
-
+function gf48_check_vin_global() {
     if (!isset($_POST['vin'])) {
         wp_send_json_error();
     }
@@ -284,11 +292,11 @@ function gf8_check_vin_global() {
 
     $current_user_id = get_current_user_id();
 
-    /* 🔑 Find current user's LATEST entry for form 8 */
+    // Find current user's LATEST entry (to be ignored)
     $latest_entry_id = 0;
     if ($current_user_id) {
         $entries = GFAPI::get_entries(
-            8,
+            48,
             [
                 'field_filters' => [
                     [
@@ -306,25 +314,23 @@ function gf8_check_vin_global() {
         }
     }
 
-    // VIN FIELD IDS ONLY
-    $vin_fields = [28, 41, 51, 62, 70];
+    // VIN FIELD IDS
+    $vin_fields = [117, 118, 119, 120];
 
     foreach ($vin_fields as $field_id) {
-
-        $entries = GFAPI::get_entries(8, [
+        $entries = GFAPI::get_entries(48, [
             'field_filters' => [
                 [
                     'key'   => (string) $field_id,
-                    'value' => $vin, // EXACT MATCH
+                    'value' => $vin,          // exact match
                 ]
             ]
         ]);
 
         foreach ($entries as $entry) {
-
             $stored_vin = strtoupper(trim((string) rgar($entry, (string) $field_id)));
 
-            // 🟢 Ignore ONLY user's latest entry
+            // Skip only if it's the current user's latest entry
             if (
                 $current_user_id &&
                 (int) $entry['created_by'] === (int) $current_user_id &&
@@ -333,7 +339,7 @@ function gf8_check_vin_global() {
                 continue;
             }
 
-            // 🔴 Any other match = duplicate
+            // Any other match → duplicate found
             if ($stored_vin === $vin) {
                 wp_send_json_success([
                     'exists' => true,
@@ -348,85 +354,83 @@ function gf8_check_vin_global() {
 
 
 /* ======================================================
- * FRONTEND – MASTER SCRIPT
+ * FRONTEND – Real-time validation + submit protection
  * ====================================================== */
 
 add_action('wp_enqueue_scripts', function () {
 
-    if (is_admin()) return;
+    // Only load on frontend
+    if (is_admin()) {
+        return;
+    }
 
-    wp_register_script('gf8-vin-final', false, ['jquery'], '1.0', true);
-    wp_enqueue_script('gf8-vin-final');
+    wp_register_script('gf48-vin-validation', false, ['jquery'], '1.1', true);
+    wp_enqueue_script('gf48-vin-validation');
 
-    wp_add_inline_script('gf8-vin-final', "
+    wp_add_inline_script('gf48-vin-validation', "
 (function($){
 
-    const vinFieldIds = [28,41,51,62,70];
-    let vinBlocked = false;
+    const vinFieldIds = [117,118,119,120];
+    let vinIsInvalid = false;
 
-    function normalize(v){
-        return v.trim().toUpperCase();
+    function normalize(vin) {
+        return (vin || '').trim().toUpperCase();
     }
 
-    function getForm(input){
-        return input.closest('form');
+    function getForm(el) {
+        return el.closest('form');
     }
 
-    function getSubmitBtn(form){
-        return form.querySelector('.gform_button');
+    function getSubmitButton(form) {
+        return form.querySelector('.gform_button, .gform_next_button, .gform_prev_button');
     }
 
-    function disableSubmit(form){
-        const btn = getSubmitBtn(form);
+    function disableSubmit(form) {
+        const btn = getSubmitButton(form);
         if (btn) {
             btn.disabled = true;
             btn.style.opacity = '0.6';
+            btn.style.cursor = 'not-allowed';
         }
     }
 
-    function enableSubmit(form){
-        const btn = getSubmitBtn(form);
+    function enableSubmit(form) {
+        const btn = getSubmitButton(form);
         if (btn) {
             btn.disabled = false;
             btn.style.opacity = '';
+            btn.style.cursor = '';
         }
     }
 
-    function clearErrors(form){
-        vinBlocked = false;
+    function clearErrors(form) {
+        vinIsInvalid = false;
         form.querySelector('#vin-error-global')?.remove();
         form.querySelector('#vin-error-local')?.remove();
-        form.querySelectorAll('.vin-error').forEach(i => i.classList.remove('vin-error'));
+        form.querySelectorAll('.vin-error').forEach(el => el.classList.remove('vin-error'));
     }
 
-    function showLocalError(form, vin){
+    function showLocalError(form, vin) {
         if (form.querySelector('#vin-error-local')) return;
 
         const div = document.createElement('div');
         div.id = 'vin-error-local';
-        div.style.color = '#dc3232';
-        div.style.fontSize = '13px';
-        div.style.marginBottom = '10px';
-        div.innerText =
-            'Duplicate VIN detected in this form: ' + vin;
+        div.style.cssText = 'color:#dc3232; font-size:13px; margin:0 0 10px; padding:8px; background:#fff5f5; border:1px solid #ffb3b3; border-radius:4px;';
+        div.textContent = 'Duplicate VIN detected in this form: ' + vin;
         form.querySelector('.gform_footer')?.prepend(div);
     }
 
-    function showGlobalError(form, vin){
+    function showGlobalError(form, vin) {
         if (form.querySelector('#vin-error-global')) return;
 
         const div = document.createElement('div');
         div.id = 'vin-error-global';
-        div.style.color = '#dc3232';
-        div.style.fontSize = '13px';
-        div.style.marginBottom = '10px';
-        div.innerText =
-            'VIN ' + vin + ' is already used by another member.';
+        div.style.cssText = 'color:#dc3232; font-size:13px; margin:0 0 10px; padding:8px; background:#fff5f5; border:1px solid #ffb3b3; border-radius:4px;';
+        div.textContent = 'VIN ' + vin + ' is already used by another member.';
         form.querySelector('.gform_footer')?.prepend(div);
     }
 
-    function validateForm(form){
-
+    function validateVINs(form) {
         clearErrors(form);
 
         const inputs = vinFieldIds
@@ -435,89 +439,94 @@ add_action('wp_enqueue_scripts', function () {
 
         const seen = {};
 
-        /* ===============================
-         * 1️⃣ SAME-FORM DUPLICATE LOGIC
-         * =============================== */
+        // 1. Check duplicates INSIDE this form
         for (const input of inputs) {
-
             const vin = normalize(input.value);
             if (!vin) continue;
 
             if (seen[vin]) {
-                vinBlocked = true;
+                vinIsInvalid = true;
                 input.classList.add('vin-error');
                 seen[vin].classList.add('vin-error');
-
                 showLocalError(form, vin);
                 disableSubmit(form);
                 return;
             }
-
             seen[vin] = input;
         }
 
-        /* ===============================
-         * 2️⃣ GLOBAL DUPLICATE LOGIC
-         * =============================== */
-        inputs.forEach(input => {
+        // 2. Check global duplicates (via AJAX)
+        let pendingChecks = 0;
 
+        inputs.forEach(input => {
             const vin = normalize(input.value);
             if (!vin) return;
 
+            pendingChecks++;
+
             $.post('" . admin_url('admin-ajax.php') . "', {
-                action: 'gf8_check_vin_global',
+                action: 'gf48_check_vin_global',
                 vin: vin
-            }, function(resp){
+            }, function(response) {
+                pendingChecks--;
 
-                if (resp.success && resp.data.exists) {
-
-                    vinBlocked = true;
+                if (response.success && response.data.exists) {
+                    vinIsInvalid = true;
                     input.classList.add('vin-error');
-
                     showGlobalError(form, vin);
                     disableSubmit(form);
+                }
 
-                } else if (!vinBlocked) {
+                // Only re-enable if no errors left
+                if (pendingChecks === 0 && !vinIsInvalid) {
                     enableSubmit(form);
                 }
             });
         });
+
+        // If no global checks needed, enable immediately
+        if (pendingChecks === 0 && !vinIsInvalid) {
+            enableSubmit(form);
+        }
     }
 
-    // Live typing
-    $(document).on('input', 'input[name^=\"input_\"]', function(){
+    // Events
+    $(document).on('input change', 'input[name^=\"input_\"]', function() {
         const form = getForm(this);
-        if (form) validateForm(form);
+        if (form && form.id.includes('gform_48')) {
+            validateVINs(form);
+        }
     });
 
-    // Page load
-    $(document).ready(function(){
-        document.querySelectorAll('.gform_wrapper form').forEach(form => {
-            validateForm(form);
-        });
+    // Initial check + after ajax load
+    $(document).on('gform_post_render', function(event, formId) {
+        if (formId == 48) {
+            document.querySelectorAll('#gform_wrapper_48 form').forEach(form => {
+                validateVINs(form);
+            });
+        }
     });
 
-    // GF ajax render
-    document.addEventListener('gform_post_render', function(){
-        document.querySelectorAll('.gform_wrapper form').forEach(form => {
-            validateForm(form);
-        });
-    });
-
-    // Hard submit block
-    document.addEventListener('submit', function(e){
-        if (vinBlocked) {
+    // Block submit if invalid
+    document.addEventListener('submit', function(e) {
+        if (vinIsInvalid && e.target.id.includes('gform_48')) {
             e.preventDefault();
             e.stopImmediatePropagation();
+            alert('Please fix the duplicate VIN errors before submitting.');
         }
     }, true);
 
 })(jQuery);
     ");
 
+    // Error styling
     wp_add_inline_style('wp-block-library', '
         .vin-error {
             border: 2px solid #dc3232 !important;
+            background-color: #fff5f5 !important;
+        }
+        .gform_wrapper .vin-error:focus {
+            outline: 2px solid #dc3232;
         }
     ');
 });

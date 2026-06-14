@@ -32,14 +32,6 @@ if (!file_exists($file_path)) {
 
 require_once $file_path;
 
-$file_path = plugin_dir_path(__FILE__) . 'admin-pages/payfast-itn.php';
-if (!file_exists($file_path)) {
-    error_log('File not found: ' . $file_path);
-    return;
-}
-
-require_once $file_path;
-
 $yoco_path = plugin_dir_path(__FILE__) . 'admin-pages/yoco-gateway/yoco-payment-gateway/yoco_wc_payment_gateway.php';
 
 if (!file_exists($yoco_path)) {
@@ -76,7 +68,6 @@ if (!file_exists($file_path)) {
     return;
 }
 require_once $file_path;
-
 
 
 // mrzim-rides
