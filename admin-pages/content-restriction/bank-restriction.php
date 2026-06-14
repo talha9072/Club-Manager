@@ -5,6 +5,17 @@ add_filter('woocommerce_bacs_accounts', function ($accounts) {
     // Get the club parameter from the URL
     $club_param = isset($_GET['club']) ? urldecode(sanitize_text_field($_GET['club'])) : '';
 
+    // Fallback: Check Referer for AJAX calls
+    if (empty($club_param) && defined('DOING_AJAX') && DOING_AJAX && !empty($_SERVER['HTTP_REFERER'])) {
+        $referer_query = parse_url($_SERVER['HTTP_REFERER'], PHP_URL_QUERY);
+        if ($referer_query) {
+            parse_str($referer_query, $referer_params);
+            if (isset($referer_params['club'])) {
+                $club_param = sanitize_text_field(urldecode($referer_params['club']));
+            }
+        }
+    }
+
     // If no club is set, return all bank accounts
     if (empty($club_param)) {
         return $accounts;
@@ -25,6 +36,10 @@ add_action('woocommerce_init', function () {
     if (isset($_GET['club']) && function_exists('WC') && WC()->session) {
         $club_param = sanitize_text_field(urldecode($_GET['club']));
         WC()->session->set('club_for_bacs', $club_param);
+        
+        // Force save session immediately to ensure parallel AJAX requests 
+        // (like update_order_review) can see the value on the first hit.
+        WC()->session->save_data();
     }
 });
 
@@ -66,11 +81,25 @@ add_filter('woocommerce_available_payment_gateways', function ($gateways) {
             unset($gateways['bacs']);
         } else {
 
-            // Prefer session value, but fall back to URL param to avoid race conditions
+            // Prefer session value
             $club_param = WC()->session->get('club_for_bacs', '');
+
+            // Fallback 1: Direct URL param (initial page load)
             if (empty($club_param) && isset($_GET['club'])) {
                 $club_param = sanitize_text_field(urldecode($_GET['club']));
             }
+
+            // Fallback 2: Referer URL (during AJAX checkout updates)
+            if (empty($club_param) && defined('DOING_AJAX') && DOING_AJAX && !empty($_SERVER['HTTP_REFERER'])) {
+                $referer_query = parse_url($_SERVER['HTTP_REFERER'], PHP_URL_QUERY);
+                if ($referer_query) {
+                    parse_str($referer_query, $referer_params);
+                    if (isset($referer_params['club'])) {
+                        $club_param = sanitize_text_field(urldecode($referer_params['club']));
+                    }
+                }
+            }
+
             $club_param_trimmed = strtolower(trim((string) $club_param));
             $is_global = $club_param_trimmed === '' || $club_param_trimmed === 'global';
 
