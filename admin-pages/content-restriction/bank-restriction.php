@@ -81,15 +81,33 @@ add_filter('woocommerce_available_payment_gateways', function ($gateways) {
             unset($gateways['bacs']);
         } else {
 
-            // Prefer session value
-            $club_param = WC()->session->get('club_for_bacs', '');
+            // Primary (reliable): derive the club from the cart/order product
+            // meta. This is present on EVERY request — including AJAX
+            // update_order_review — so it does not depend on the URL param,
+            // session timing, or the Referer header being available.
+            $club_param = '';
+            $club_context_id = bca_get_club_id_from_context();
+            if ($club_context_id) {
+                $club_name_db = $wpdb->get_var($wpdb->prepare(
+                    "SELECT club_name FROM {$wpdb->prefix}clubs WHERE club_id = %d",
+                    $club_context_id
+                ));
+                if (!empty($club_name_db)) {
+                    $club_param = $club_name_db;
+                }
+            }
 
-            // Fallback 1: Direct URL param (initial page load)
+            // Fallback 1: WC session value
+            if (empty($club_param)) {
+                $club_param = WC()->session->get('club_for_bacs', '');
+            }
+
+            // Fallback 2: Direct URL param (initial page load)
             if (empty($club_param) && isset($_GET['club'])) {
                 $club_param = sanitize_text_field(urldecode($_GET['club']));
             }
 
-            // Fallback 2: Referer URL (during AJAX checkout updates)
+            // Fallback 3: Referer URL (during AJAX checkout updates)
             if (empty($club_param) && defined('DOING_AJAX') && DOING_AJAX && !empty($_SERVER['HTTP_REFERER'])) {
                 $referer_query = parse_url($_SERVER['HTTP_REFERER'], PHP_URL_QUERY);
                 if ($referer_query) {
@@ -116,7 +134,13 @@ add_filter('woocommerce_available_payment_gateways', function ($gateways) {
                 }
             }
 
-            if (!$match_found) {
+            // FAIL-OPEN: only hide BACS when a club was POSITIVELY identified
+            // and it genuinely has no matching bank account. If we could not
+            // determine the club at all (empty after every source), keep BACS
+            // visible — that prevents BACS-only clubs from ever ending up with
+            // "No payment methods available" due to lost URL/session/referer
+            // context during an intermittent AJAX refresh.
+            if (!$match_found && !empty($club_param_trimmed)) {
                 unset($gateways['bacs']);
             }
         }
