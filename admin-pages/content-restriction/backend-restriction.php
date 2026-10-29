@@ -232,6 +232,12 @@ function restrict_admin_menu_for_club_roles() {
                             'edit.php?post_type=shop_order' // Only Orders
                         ];
                     }
+
+                    // Club Managers run AutomateWoo manual workflows, whose runner lives on the wc-admin page.
+                    // WordPress denies a page whose menu entry was removed, so keep it (hidden with CSS below).
+                    if ($role === "Club Manager") {
+                        $allowed_woo_menus[] = 'wc-admin';
+                    }
             
                     // Remove unwanted WooCommerce submenu items
                     foreach ($submenu['woocommerce'] as $key => $item) {
@@ -254,7 +260,8 @@ function restrict_admin_menu_for_club_roles() {
             // Extra security: Hide it with CSS and JavaScript
             add_action('admin_head', function () {
                 echo '<style>
-                    #menu-posts-evo-tix, 
+                    #menu-posts-evo-tix,
+                    #toplevel_page_woocommerce .wp-submenu a[href="admin.php?page=wc-admin"],
                     [href="edit.php?post_type=evo-tix"],
                     [href="admin.php?page=event-tickets"] { 
                         display: none !important; 
