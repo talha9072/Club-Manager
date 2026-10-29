@@ -4,6 +4,55 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * Valuation form IDs selected in Club Setup (wp_clubs.gform_id) for the member's club. When a membership is
+ * selected in the dashboard (product_id in the URL) only that product's club is used; otherwise all clubs of
+ * the user's subscription products (_select_club_id) plus clubs they are on in wp_club_members.
+ */
+function get_member_valuation_form_ids() {
+    global $wpdb;
+
+    $user = wp_get_current_user();
+    if (!$user->exists()) {
+        return [];
+    }
+
+    $product_id = isset($_GET['product_id']) ? intval($_GET['product_id']) : 0;
+    $selected_club_id = $product_id ? intval(get_post_meta($product_id, '_select_club_id', true)) : 0;
+
+    if ($selected_club_id) {
+        $club_ids = [$selected_club_id];
+    } else {
+        $club_ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT club_id FROM {$wpdb->prefix}club_members WHERE user_email = %s",
+            $user->user_email
+        ));
+
+        if (function_exists('wcs_get_users_subscriptions')) {
+            foreach (wcs_get_users_subscriptions($user->ID) as $subscription) {
+                foreach ($subscription->get_items() as $item) {
+                    $club_id = get_post_meta($item->get_product_id(), '_select_club_id', true);
+                    if ($club_id) {
+                        $club_ids[] = $club_id;
+                    }
+                }
+            }
+        }
+    }
+
+    $club_ids = array_unique(array_filter(array_map('intval', $club_ids)));
+    if (empty($club_ids)) {
+        return [];
+    }
+
+    $form_ids = $wpdb->get_col(
+        "SELECT DISTINCT gform_id FROM {$wpdb->prefix}clubs
+         WHERE club_id IN (" . implode(',', $club_ids) . ") AND gform_id > 0"
+    );
+
+    return array_map('intval', $form_ids);
+}
+
 // Function to fetch and display all valuations done by the logged-in user
 function fetch_user_valuations() {
     // Get the current logged-in user
@@ -19,7 +68,15 @@ function fetch_user_valuations() {
 
     global $wpdb;
 
-    // Query to fetch all valuations for Gravity Form ID 25
+    // Only the valuation form(s) chosen in Club Setup for the user's club(s)
+    $form_ids = get_member_valuation_form_ids();
+    if (empty($form_ids)) {
+        echo '<h2 class="h2-switch">Valuations</h2>';
+        echo '<p>No valuation found. Valuations are not available for your club.</p>';
+        return;
+    }
+
+    // Query to fetch all valuations for the club's valuation form(s)
     $all_valuations = $wpdb->get_results(
         $wpdb->prepare(
             "SELECT e.id AS entry_id, e.date_created,
@@ -28,8 +85,8 @@ function fetch_user_valuations() {
                     (SELECT meta_value FROM {$wpdb->prefix}gf_entry_meta WHERE entry_id = e.id AND meta_key = '5') AS mileage,
                     (SELECT meta_value FROM {$wpdb->prefix}gf_entry_meta WHERE entry_id = e.id AND meta_key = 'evaluation_pdf') AS evaluation_pdf
              FROM {$wpdb->prefix}gf_entry e
-             WHERE e.created_by = %d AND e.form_id = %d",
-            $user_id, 25
+             WHERE e.created_by = %d AND e.form_id IN (" . implode(',', $form_ids) . ")",
+            $user_id
         )
     );
 
@@ -182,8 +239,15 @@ function fetch_user_valuations() {
 
 // Function to render the Add Valuation form
 function addvaluation() {
-    
-    echo do_shortcode('[gravityform id="25" title="true" description="true"]');
+    $form_ids = get_member_valuation_form_ids();
+    if (empty($form_ids)) {
+        echo '<p>No valuation found. Valuations are not available for your club.</p>';
+        return;
+    }
+
+    foreach ($form_ids as $form_id) {
+        echo do_shortcode('[gravityform id="' . $form_id . '" title="true" description="true"]');
+    }
 }
 
 // Main logic to determine what to render
