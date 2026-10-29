@@ -153,11 +153,37 @@ function enforce_club_role_capabilities() {
             $user->add_cap($cap);
         }
 
+        // Clean up EventON term caps that were briefly granted here and are not needed
+        foreach (['manage_eventon_terms', 'edit_eventon_terms', 'assign_eventon_terms'] as $cap) {
+            if (!empty($user->caps[$cap])) {
+                $user->remove_cap($cap);
+            }
+        }
+
         debug_log(" {$role} capabilities applied for {$user->user_email}");
     }
 }
 
 add_action('set_current_user', 'enforce_club_role_capabilities');
+
+/**
+ * EventON 5.1 checks current_user_can('edit_eventon') without an event ID when saving an event's
+ * location/organizer, which WordPress always denies, so only manage_eventon users could save.
+ * Map that check to edit rights on the event being saved (or edit_eventons when no event is given).
+ * WordPress translates edit_eventon to edit_post before this filter runs, so match edit_post with no ID.
+ */
+function map_eventon_edit_cap_without_event($caps, $cap, $user_id, $args) {
+    $action = isset($_REQUEST['action']) ? $_REQUEST['action'] : '';
+    if ($cap === 'edit_post' && empty($args) && wp_doing_ajax() && $action === 'eventon_event_tax_save_changes') {
+        $event_id = isset($_POST['event_id']) ? absint($_POST['event_id']) : 0;
+        if ($event_id && get_post_type($event_id) === 'ajde_events') {
+            return map_meta_cap('edit_post', $user_id, $event_id);
+        }
+        return ['edit_eventons'];
+    }
+    return $caps;
+}
+add_filter('map_meta_cap', 'map_eventon_edit_cap_without_event', 10, 4);
 
 // Removing rank math from top bar
 add_action('admin_bar_menu', function ($wp_admin_bar) {
@@ -460,6 +486,17 @@ function hide_woocommerce_badge_css() {
     </style>';
 }
 add_action('admin_head', 'hide_woocommerce_badge_css');
+
+/**
+ * EventON 5.1 time picker fix: the hour/minute/AM-PM dropdown is appended to <body> with
+ * position:fixed but positioned with document offsets, so it opens off-screen once the page is scrolled.
+ */
+function fix_eventon_time_dropdown_position() {
+    echo '<style>
+        .evo_time_dropdown { position: absolute !important; }
+    </style>';
+}
+add_action('admin_head', 'fix_eventon_time_dropdown_position');
 
 
 
